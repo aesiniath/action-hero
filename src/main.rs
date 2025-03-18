@@ -46,7 +46,10 @@ async fn main() -> Result<()> {
                     .help("Name of the GitHub Actions workflow to present as a trace. The default workflow used if unspecified is check.yaml"))
             .get_matches();
 
-    let workflow = matches.get_one::<String>("workflow").unwrap().to_string();
+    let workflow = matches
+        .get_one::<String>("workflow")
+        .unwrap()
+        .to_string();
 
     println!("{}", workflow);
 
