@@ -1,6 +1,18 @@
 use clap::{Arg, ArgAction, Command};
+use reqwest;
+use std::collections::HashMap;
 
-fn main() {
+async fn hello() -> Result<(), Box<dyn std::error::Error>> {
+    let resp = reqwest::get("https://httpbin.org/ip")
+        .await?
+        .json::<HashMap<String, String>>()
+        .await?;
+    println!("{resp:#?}");
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
     let matches = Command::new("tracer")
@@ -36,4 +48,8 @@ fn main() {
     let workflow = matches.get_one::<String>("workflow").unwrap().to_string();
 
     println!("{}", workflow);
+
+    hello().await?;
+
+    Ok(())
 }
