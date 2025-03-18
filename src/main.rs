@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use reqwest;
 use std::collections::HashMap;
+use tracing::{debug, info};
+use tracing_subscriber;
 
 async fn hello() -> Result<()> {
     let resp = reqwest::get("https://httpbin.org/ip")
@@ -15,6 +17,9 @@ async fn hello() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+
+    // Initialize the tracing subscriber
+    tracing_subscriber::fmt::init();
 
     let matches = Command::new("hero")
             .version(VERSION)
@@ -51,7 +56,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .to_string();
 
-    println!("{}", workflow);
+    debug!(workflow);
 
     hello().await?;
 
