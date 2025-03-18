@@ -1,8 +1,9 @@
+use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use reqwest;
 use std::collections::HashMap;
 
-async fn hello() -> Result<(), Box<dyn std::error::Error>> {
+async fn hello() -> Result<()> {
     let resp = reqwest::get("https://httpbin.org/ip")
         .await?
         .json::<HashMap<String, String>>()
@@ -12,10 +13,10 @@ async fn hello() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
-    let matches = Command::new("tracer")
+    let matches = Command::new("hero")
             .version(VERSION)
             .propagate_version(true)
             .author("Andrew Cowie")
