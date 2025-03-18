@@ -44,12 +44,23 @@ async fn main() -> Result<()> {
                     .hide(true)
                     .action(ArgAction::Version))
             .arg(
-                Arg::new("workflow")
-                    .long("workflow")
+                Arg::new("repository")
                     .action(ArgAction::Set)
-                    .default_value("check.yaml")
-                    .help("Name of the GitHub Actions workflow to present as a trace. The default workflow used if unspecified is check.yaml"))
+                    .required(true)
+                    .help("Name of the GitHub repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
+            .arg(
+                Arg::new("workflow")
+                    .action(ArgAction::Set)
+                    .required(true)
+                    .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
             .get_matches();
+
+    let repository = matches
+        .get_one::<String>("repository")
+        .unwrap()
+        .to_string();
+
+    debug!(repository);
 
     let workflow = matches
         .get_one::<String>("workflow")
