@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
+use std::time::{Duration, SystemTime};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
 use tracing_subscriber;
@@ -15,6 +16,16 @@ struct API {
     owner: String,
     repository: String,
     workflow: String,
+}
+
+/// It turns out that the OpenTelemetry API uses std::time::SystemTime to
+/// represent start and end times (which makes sense, given that is mostly
+/// about getting now() from the OS, but they are otherwise a little difficult
+/// to construct). This function converts from the OffsetDateTime produced by
+/// the *time* crate's parser to SystemTime.
+fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
+    let unix_timestamp = datetime.unix_timestamp();
+    SystemTime::UNIX_EPOCH + Duration::from_secs(unix_timestamp as u64)
 }
 
 async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
