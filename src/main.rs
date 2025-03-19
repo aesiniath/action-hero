@@ -21,6 +21,8 @@ async fn retrieve_workflow_runs(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
         owner, repository, workflow
     );
+    debug!(?url);
+
     let response = client
         .get(&url)
         .header("Authorization", format!("Bearer {}", token))
@@ -49,6 +51,52 @@ async fn retrieve_workflow_runs(
         .collect();
 
     Ok(runs)
+}
+
+async fn retrieve_run_jobs(
+    client: &reqwest::Client,
+    owner: &str,
+    repository: &str,
+    run_id: &str,
+) -> Result<Vec<String>> {
+    // get GITHUB_TOKEN value from environment variable
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs?per_page=10&page=1",
+        owner, repository, run_id
+    );
+
+    debug!(?url);
+
+    let response = client
+        .get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", format!("action-hero/{}", VERSION))
+        .send()
+        .await?;
+
+    let body = response
+        .json::<serde_json::Value>()
+        .await?;
+
+    debug!("body: {:#?}", body);
+
+    let jobs: Vec<String> = body["jobs"]
+        .as_array()
+        .expect("Expected jobs to be an array")
+        .iter()
+        .map(|job| {
+            job["name"]
+                .as_str()
+                .expect("Expected job name to be present")
+                .to_owned()
+        })
+        .collect();
+
+    Ok(jobs)
 }
 
 #[tokio::main]
@@ -115,5 +163,17 @@ async fn main() -> Result<()> {
     let runs: Vec<String> = retrieve_workflow_runs(&client, &owner, &repository, &workflow).await?;
 
     println!("runs: {:#?}", runs);
+
+    let run_id: &str = runs
+        .first()
+        .unwrap()
+        .as_ref();
+
+    debug!(run_id);
+
+    let jobs: Vec<String> = retrieve_run_jobs(&client, &owner, &repository, &run_id).await?;
+
+    println!("jobs: {:#?}", jobs);
+
     Ok(())
 }
