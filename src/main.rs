@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use reqwest;
 use serde_json::Value;
 use tracing::{debug, info};
 use tracing_subscriber;
@@ -8,6 +7,7 @@ use tracing_subscriber;
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 async fn retrieve_workflow_runs(
+    client: &reqwest::Client,
     owner: &str,
     repository: &str,
     workflow: &str,
@@ -16,7 +16,7 @@ async fn retrieve_workflow_runs(
     let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
 
     // use token to retrieve runs for the given workflow from GitHub API
-    let client = reqwest::Client::new();
+
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
         owner, repository, workflow
@@ -108,8 +108,12 @@ async fn main() -> Result<()> {
 
     debug!(workflow);
 
-    let runs: Vec<String> = retrieve_workflow_runs(&owner, &repository, &workflow).await?;
+    // Initialize a request Client as we will be making many requests of
+    // the GitHub API.
+    let client = reqwest::Client::new();
 
-    debug!("runs: {:?}", runs);
+    let runs: Vec<String> = retrieve_workflow_runs(&client, &owner, &repository, &workflow).await?;
+
+    println!("runs: {:#?}", runs);
     Ok(())
 }
