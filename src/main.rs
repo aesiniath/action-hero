@@ -56,7 +56,7 @@ async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<String>> {
+async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<Value>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         api.owner, api.repository, run_id
@@ -78,19 +78,36 @@ async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<String>> {
         .json::<serde_json::Value>()
         .await?;
 
-    let jobs: Vec<String> = body["jobs"]
+    let jobs: Vec<Value> = body["jobs"]
         .as_array()
         .expect("Expected jobs to be an array")
-        .iter()
-        .map(|job| {
-            job["name"]
-                .as_str()
-                .expect("Expected job name to be present")
-                .to_owned()
-        })
-        .collect();
+        .to_vec();
 
     Ok(jobs)
+}
+
+fn display_job_steps(jobs: &Vec<serde_json::Value>) {
+    for job in jobs {
+        let job_name = job["name"]
+            .as_str()
+            .unwrap();
+
+        println!("{}", job_name);
+
+        let steps = job["steps"]
+            .as_array()
+            .expect("Expected steps to be an array");
+
+        for step in steps {
+            let step_name = step["name"]
+                .as_str()
+                .unwrap();
+            let step_status = step["status"]
+                .as_str()
+                .unwrap();
+            println!("    {}: {}", step_name, step_status);
+        }
+    }
 }
 
 #[tokio::main]
@@ -178,9 +195,9 @@ async fn main() -> Result<()> {
 
     debug!(run_id);
 
-    let jobs: Vec<String> = retrieve_run_jobs(&api, &run_id).await?;
+    let jobs: Vec<Value> = retrieve_run_jobs(&api, &run_id).await?;
 
-    println!("jobs: {:#?}", jobs);
+    display_job_steps(&jobs);
 
     Ok(())
 }
