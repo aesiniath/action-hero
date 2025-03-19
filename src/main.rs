@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
@@ -11,7 +12,6 @@ const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 /// GitHub's API.
 struct API {
     client: reqwest::Client,
-    token: String,
     owner: String,
     repository: String,
     workflow: String,
@@ -29,10 +29,6 @@ async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
     let response = api
         .client
         .get(&url)
-        .header("Authorization", format!("Bearer {}", api.token))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", format!("action-hero/{}", VERSION))
         .send()
         .await?;
 
@@ -68,10 +64,6 @@ async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<Value>> {
     let response = api
         .client
         .get(url)
-        .header("Authorization", format!("Bearer {}", api.token))
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", format!("action-hero/{}", VERSION))
         .send()
         .await?;
 
@@ -123,6 +115,47 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             println!("    {}: {}, {}", step_name, step_status, step_duration);
         }
     }
+}
+
+fn setup_api_client() -> Result<reqwest::Client> {
+    // get GITHUB_TOKEN value from environment variable
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+
+    // Initialize a request Client as we will be making many requests of
+    // the GitHub API.
+    let mut headers = HeaderMap::new();
+
+    let mut auth: HeaderValue = format!("Bearer {}", token)
+        .parse()
+        .unwrap();
+    auth.set_sensitive(true);
+    headers.insert("Authorization", auth);
+
+    headers.insert(
+        "Accept",
+        "application/vnd.github+json"
+            .parse()
+            .unwrap(),
+    );
+
+    headers.insert(
+        "User-Agent",
+        format!("action-hero/{}", VERSION)
+            .parse()
+            .unwrap(),
+    );
+
+    headers.insert(
+        "X-GitHub-Api-Version",
+        "2022-11-28"
+            .parse()
+            .unwrap(),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
+
+    Ok(client)
 }
 
 #[tokio::main]
@@ -184,16 +217,10 @@ async fn main() -> Result<()> {
 
     debug!(workflow);
 
-    // Initialize a request Client as we will be making many requests of
-    // the GitHub API.
-    let client = reqwest::Client::new();
-
-    // get GITHUB_TOKEN value from environment variable
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    let client = setup_api_client()?;
 
     let api = API {
         client,
-        token,
         owner,
         repository,
         workflow,
