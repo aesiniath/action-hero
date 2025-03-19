@@ -6,26 +6,29 @@ use tracing_subscriber;
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
-async fn retrieve_workflow_runs(
-    client: &reqwest::Client,
-    owner: &str,
-    repository: &str,
-    workflow: &str,
-) -> Result<Vec<String>> {
-    // get GITHUB_TOKEN value from environment variable
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+/// A struct holding the configuration being used to retrieve information from
+/// GitHub's API.
+struct API {
+    client: reqwest::Client,
+    token: String,
+    owner: String,
+    repository: String,
+    workflow: String,
+}
 
+async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
     // use token to retrieve runs for the given workflow from GitHub API
 
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
-        owner, repository, workflow
+        api.owner, api.repository, api.workflow
     );
     debug!(?url);
 
-    let response = client
+    let response = api
+        .client
         .get(&url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {}", api.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", format!("action-hero/{}", VERSION))
@@ -53,25 +56,18 @@ async fn retrieve_workflow_runs(
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(
-    client: &reqwest::Client,
-    owner: &str,
-    repository: &str,
-    run_id: &str,
-) -> Result<Vec<String>> {
-    // get GITHUB_TOKEN value from environment variable
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
-
+async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<String>> {
     let url = format!(
-        "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs?per_page=10&page=1",
-        owner, repository, run_id
+        "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
+        api.owner, api.repository, run_id
     );
 
     debug!(?url);
 
-    let response = client
+    let response = api
+        .client
         .get(url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {}", api.token))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", format!("action-hero/{}", VERSION))
@@ -81,8 +77,6 @@ async fn retrieve_run_jobs(
     let body = response
         .json::<serde_json::Value>()
         .await?;
-
-    debug!("body: {:#?}", body);
 
     let jobs: Vec<String> = body["jobs"]
         .as_array()
@@ -148,6 +142,8 @@ async fn main() -> Result<()> {
     let (owner, repository) = repository
         .split_once('/')
         .expect("Repository must be specified in the form \"owner/repo\"");
+    let owner = owner.to_owned();
+    let repository = repository.to_owned();
 
     let workflow = matches
         .get_one::<String>("workflow")
@@ -160,7 +156,18 @@ async fn main() -> Result<()> {
     // the GitHub API.
     let client = reqwest::Client::new();
 
-    let runs: Vec<String> = retrieve_workflow_runs(&client, &owner, &repository, &workflow).await?;
+    // get GITHUB_TOKEN value from environment variable
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+
+    let api = API {
+        client,
+        token,
+        owner,
+        repository,
+        workflow,
+    };
+
+    let runs: Vec<String> = retrieve_workflow_runs(&api).await?;
 
     println!("runs: {:#?}", runs);
 
@@ -171,7 +178,7 @@ async fn main() -> Result<()> {
 
     debug!(run_id);
 
-    let jobs: Vec<String> = retrieve_run_jobs(&client, &owner, &repository, &run_id).await?;
+    let jobs: Vec<String> = retrieve_run_jobs(&api, &run_id).await?;
 
     println!("jobs: {:#?}", jobs);
 
