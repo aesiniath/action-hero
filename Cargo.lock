@@ -361,6 +361,7 @@ dependencies = [
  "anyhow",
  "clap",
  "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
