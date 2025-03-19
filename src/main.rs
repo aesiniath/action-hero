@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use reqwest;
-use std::collections::HashMap;
+use serde_json::Value;
 use tracing::{debug, info};
 use tracing_subscriber;
 
@@ -18,7 +18,7 @@ async fn retrieve_workflow_runs(
     // use token to retrieve runs for the given workflow from GitHub API
     let client = reqwest::Client::new();
     let url = format!(
-        "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs",
+        "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
         owner, repository, workflow
     );
     let response = client
@@ -30,14 +30,27 @@ async fn retrieve_workflow_runs(
         .send()
         .await?;
 
-    let body = response
-        .text()
+    // retrieve the run ID of the most recent 10 runs
+    let body: Value = response
+        .json()
         .await?;
 
-    debug!(body);
+    let runs: Vec<String> = body["workflow_runs"]
+        .as_array()
+        .expect("Expected workflow_runs to be an array")
+        .iter()
+        .take(10)
+        .map(|workflow_run| {
+            workflow_run["id"]
+                .as_i64()
+                .expect("Expected run ID to be present and non-empty")
+                .to_string()
+        })
+        .collect();
 
-    Ok(vec![])
+    Ok(runs)
 }
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize the tracing subscriber
