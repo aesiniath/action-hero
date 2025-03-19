@@ -5,19 +5,41 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 use tracing_subscriber;
 
-async fn hello() -> Result<()> {
-    let resp = reqwest::get("https://httpbin.org/ip")
-        .await?
-        .json::<HashMap<String, String>>()
-        .await?;
-    println!("{resp:#?}");
-    Ok(())
-}
+const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
+async fn retrieve_workflow_runs(
+    owner: &str,
+    repository: &str,
+    workflow: &str,
+) -> Result<Vec<String>> {
+    // get GITHUB_TOKEN value from environment variable
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+
+    // use token to retrieve runs for the given workflow from GitHub API
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs",
+        owner, repository, workflow
+    );
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", format!("action-hero/{}", VERSION))
+        .send()
+        .await?;
+
+    let body = response
+        .text()
+        .await?;
+
+    debug!(body);
+
+    Ok(vec![])
+}
 #[tokio::main]
 async fn main() -> Result<()> {
-    const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-
     // Initialize the tracing subscriber
     tracing_subscriber::fmt::init();
 
@@ -47,7 +69,7 @@ async fn main() -> Result<()> {
                 Arg::new("repository")
                     .action(ArgAction::Set)
                     .required(true)
-                    .help("Name of the GitHub repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
+                    .help("Name of the GitHub organization and repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
             .arg(
                 Arg::new("workflow")
                     .action(ArgAction::Set)
@@ -62,6 +84,10 @@ async fn main() -> Result<()> {
 
     debug!(repository);
 
+    let (owner, repository) = repository
+        .split_once('/')
+        .expect("Repository must be specified in the form \"owner/repo\"");
+
     let workflow = matches
         .get_one::<String>("workflow")
         .unwrap()
@@ -69,7 +95,8 @@ async fn main() -> Result<()> {
 
     debug!(workflow);
 
-    hello().await?;
+    let runs: Vec<String> = retrieve_workflow_runs(&owner, &repository, &workflow).await?;
 
+    debug!("runs: {:?}", runs);
     Ok(())
 }
