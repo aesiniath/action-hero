@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use serde_json::Value;
-use tracing::{debug, info};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use tracing::debug;
 use tracing_subscriber;
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -105,7 +106,21 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             let step_status = step["status"]
                 .as_str()
                 .unwrap();
-            println!("    {}: {}", step_name, step_status);
+            let step_start = step["started_at"]
+                .as_str()
+                .unwrap();
+            let step_finish = step["completed_at"]
+                .as_str()
+                .unwrap();
+
+            // convert start and stop times to a suitable DateTime type
+
+            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap();
+            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap();
+
+            let step_duration = step_finish - step_start;
+
+            println!("    {}: {}, {}", step_name, step_status, step_duration);
         }
     }
 }
