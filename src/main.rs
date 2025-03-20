@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
 use opentelemetry::trace::{Span, SpanBuilder, TracerProvider};
-use opentelemetry::{KeyValue, global};
-use opentelemetry_otlp::SpanExporter;
+use opentelemetry::{KeyValue, TraceId, global};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
+use sha2::Digest;
 use std::time::{Duration, SystemTime};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
@@ -32,6 +32,26 @@ struct API {
 fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
     let unix_timestamp = datetime.unix_timestamp();
     SystemTime::UNIX_EPOCH + Duration::from_secs(unix_timestamp as u64)
+}
+
+fn form_trace_id(config: &API, run_id: &str) -> TraceId {
+    let input = format!(
+        "{}:{}:{}:{}",
+        config.owner, config.repository, config.workflow, run_id
+    );
+
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+
+    // Trace IDs are defined as being 128 bits, so somewhat arbitrarily we
+    // just select half of the 256 bit hash result.
+
+    let lower: [u8; 16] = result[..16]
+        .try_into()
+        .unwrap();
+
+    TraceId::from_bytes(lower)
 }
 
 async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
@@ -298,11 +318,12 @@ async fn main() -> Result<()> {
 
     println!("runs: {:#?}", runs);
 
+    // temporarily take just the first run in the list
+
     let run_id: &str = runs
         .first()
         .unwrap()
         .as_ref();
-
     debug!(run_id);
 
     let jobs: Vec<Value> = retrieve_run_jobs(&api, &run_id).await?;
