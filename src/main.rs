@@ -143,12 +143,12 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             let step_start = convert_to_system_time(&step_start);
             let step_finish = convert_to_system_time(&step_finish);
 
-            let mut span = SpanBuilder::from_name(step_name)
+            let mut span = SpanBuilder::from_name(step_name.to_owned())
                 .with_start_time(step_start)
                 .with_end_time(step_finish)
                 .start(&tracer);
 
-            span.set_attribute(KeyValue::new("step.status", step_status));
+            span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
 
             span.end_with_timestamp(step_finish);
         }
