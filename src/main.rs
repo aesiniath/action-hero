@@ -1,5 +1,11 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
+use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::SpanExporter;
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 use std::time::{Duration, SystemTime};
@@ -174,6 +180,41 @@ async fn main() -> Result<()> {
     // Initialize the tracing subscriber
     tracing_subscriber::fmt::init();
 
+    // Setup OpenTelemetry. First we establish a Resource, which is a set of reusable attributes and
+    // other characteristics which will be applied to all traces.
+
+    let resource = Resource::builder()
+        .with_attributes([
+            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
+            KeyValue::new(SERVICE_VERSION, VERSION),
+        ])
+        .build();
+
+    // Here we establish the SpanExporter subsystem that will transmit spans
+    // and events out via OTLP to an otel-collector and onwards to Honeycomb.
+
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .build()
+        .unwrap();
+
+    // Now we bind this exporter and resource to a TracerProvider whose sole purpose appears to be
+    // providing a way to get a Tracer which in turn is the interface used for creating spans.
+
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter)
+        .with_resource(resource)
+        .build();
+
+    // global::set_tracer_provider(provider);
+    // let provider = global::tracer_provider();
+
+    // And at last we can get a Tracer.
+
+    let tracer = provider.tracer("action-hero");
+
+    // Configure command-line argument parser
+
     let matches = Command::new("hero")
             .version(VERSION)
             .propagate_version(true)
@@ -251,6 +292,9 @@ async fn main() -> Result<()> {
     let jobs: Vec<Value> = retrieve_run_jobs(&api, &run_id).await?;
 
     display_job_steps(&jobs);
+
+    // Ensure all spans are exported before the program exits
+    provider.shutdown()?;
 
     Ok(())
 }
