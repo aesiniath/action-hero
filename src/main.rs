@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use opentelemetry::KeyValue;
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{Span, SpanBuilder, TracerProvider};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
@@ -130,6 +130,27 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             let step_duration = step_finish - step_start;
 
             println!("    {}: {}, {}", step_name, step_status, step_duration);
+
+            // Get read to send OpenTelemetry data
+
+            let provider = global::tracer_provider();
+            let tracer = provider.tracer("fixme-1");
+
+            // It's not clear if setting the end time does any good here, as
+            // we have to close a span with a timestamp (otherwise it gets
+            // told to be now() from a few places)
+
+            let step_start = convert_to_system_time(&step_start);
+            let step_finish = convert_to_system_time(&step_finish);
+
+            let mut span = SpanBuilder::from_name(step_name)
+                .with_start_time(step_start)
+                .with_end_time(step_finish)
+                .start(&tracer);
+
+            span.set_attribute(KeyValue::new("step.status", step_status));
+
+            span.end_with_timestamp(step_finish);
         }
     }
 }
@@ -206,12 +227,7 @@ async fn main() -> Result<()> {
         .with_resource(resource)
         .build();
 
-    // global::set_tracer_provider(provider);
-    // let provider = global::tracer_provider();
-
-    // And at last we can get a Tracer.
-
-    let tracer = provider.tracer("action-hero");
+    global::set_tracer_provider(provider.clone());
 
     // Configure command-line argument parser
 
