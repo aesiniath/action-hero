@@ -1,10 +1,14 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use opentelemetry::trace::{Span, SpanBuilder, TracerProvider};
-use opentelemetry::{KeyValue, TraceId, global};
+use opentelemetry::trace::{
+    Span, SpanBuilder, SpanContext, TraceContextExt, TraceState, TracerProvider,
+};
+use opentelemetry::{Context, KeyValue, SpanId, TraceFlags, TraceId, global, trace::Tracer};
+use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
+// use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 use sha2::Digest;
@@ -116,7 +120,7 @@ async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<Value>> {
     Ok(jobs)
 }
 
-fn display_job_steps(jobs: &Vec<serde_json::Value>) {
+fn display_job_steps(parent: &Context, jobs: &Vec<serde_json::Value>) {
     for job in jobs {
         let job_name = job["name"]
             .as_str()
@@ -156,9 +160,10 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             let provider = global::tracer_provider();
             let tracer = provider.tracer("fixme-1");
 
-            // It's not clear if setting the end time does any good here, as
-            // we have to close a span with a timestamp (otherwise it gets
-            // told to be now() from a few places)
+            // And now at last we creat a span. It's not clear if setting the
+            // end time does any good here, as we have to close a span with a
+            // timestamp (otherwise it gets told to be now() from a few
+            // places)
 
             let step_start = convert_to_system_time(&step_start);
             let step_finish = convert_to_system_time(&step_finish);
@@ -166,7 +171,7 @@ fn display_job_steps(jobs: &Vec<serde_json::Value>) {
             let mut span = SpanBuilder::from_name(step_name.to_owned())
                 .with_start_time(step_start)
                 .with_end_time(step_finish)
-                .start(&tracer);
+                .start_with_context(&tracer, parent);
 
             span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
 
@@ -216,6 +221,33 @@ fn setup_api_client() -> Result<reqwest::Client> {
     Ok(client)
 }
 
+fn establish_root_span(config: &API, run_id: &str) -> Context {
+    let trace_id = form_trace_id(&config, &run_id);
+
+    // this is meant to be the immutable, reusable part of a trace that can be
+    // propegated to a remote process (or received from a invoking parent). In our
+    // case we just need to control the values being used.
+    let span_context = SpanContext::new(
+        trace_id,
+        SpanId::INVALID,
+        TraceFlags::SAMPLED,
+        false,
+        TraceState::NONE,
+    );
+
+    // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
+    // unhelpful to say the least.
+    let context = Context::new().with_remote_span_context(span_context);
+
+    let provider = global::tracer_provider();
+    let tracer = provider.tracer("action-hero-5"); // FIXME what is this name used for?
+
+    let builder = SpanBuilder::from_name("FIXME");
+    let span = tracer.build_with_context(builder, &context);
+    let context = context.with_span(span);
+    context
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize the tracing subscriber
@@ -238,6 +270,7 @@ async fn main() -> Result<()> {
         .with_tonic()
         .build()
         .unwrap();
+    // let exporter = SpanExporter::default();
 
     // Now we bind this exporter and resource to a TracerProvider whose sole purpose appears to be
     // providing a way to get a Tracer which in turn is the interface used for creating spans.
@@ -326,9 +359,11 @@ async fn main() -> Result<()> {
         .as_ref();
     debug!(run_id);
 
+    let root = establish_root_span(&api, &run_id);
+
     let jobs: Vec<Value> = retrieve_run_jobs(&api, &run_id).await?;
 
-    display_job_steps(&jobs);
+    display_job_steps(&root, &jobs);
 
     // Ensure all spans are exported before the program exits
     provider.shutdown()?;
