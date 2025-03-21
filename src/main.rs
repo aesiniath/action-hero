@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     let resource = Resource::builder()
         .with_attributes([
-            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
+            KeyValue::new(SERVICE_NAME, "github-builds"),
             KeyValue::new(SERVICE_VERSION, VERSION),
         ])
         .build();
