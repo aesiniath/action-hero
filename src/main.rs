@@ -160,7 +160,7 @@ fn display_job_steps(parent: &Context, jobs: &Vec<serde_json::Value>) {
             let provider = global::tracer_provider();
             let tracer = provider.tracer("fixme-1");
 
-            // And now at last we creat a span. It's not clear if setting the
+            // And now at last we create a span. It's not clear if setting the
             // end time does any good here, as we have to close a span with a
             // timestamp (otherwise it gets told to be now() from a few
             // places)
@@ -225,7 +225,7 @@ fn establish_root_span(config: &API, run_id: &str) -> Context {
     let trace_id = form_trace_id(&config, &run_id);
 
     // this is meant to be the immutable, reusable part of a trace that can be
-    // propegated to a remote process (or received from a invoking parent). In our
+    // propagated to a remote process (or received from a invoking parent). In our
     // case we just need to control the values being used.
     let span_context = SpanContext::new(
         trace_id,
@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
         .build();
 
     // Here we establish the SpanExporter subsystem that will transmit spans
-    // and events out via OTLP to an otel-collector and onwards to Honeycomb.
+    // and events out via OTLP to an otel-collector and onward to Honeycomb.
 
     let exporter = SpanExporter::builder()
         .with_tonic()
