@@ -8,6 +8,7 @@ use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
+use std::process;
 // use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
@@ -26,6 +27,7 @@ struct API {
     owner: String,
     repository: String,
     workflow: String,
+    devel: bool,
 }
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
@@ -46,6 +48,16 @@ fn form_trace_id(config: &API, run_id: &str) -> TraceId {
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(input.as_bytes());
+
+    // if we signal that we're doing development we mix in the PID to override
+    // the otherwise deterministic nature of assigning a TraceID so we can get
+    // separate traces into Honeycomb when testing.
+
+    if config.devel {
+        let pid = process::id();
+        hasher.update(pid.to_le_bytes());
+    }
+
     let result = hasher.finalize();
 
     // Trace IDs are defined as being 128 bits, so somewhat arbitrarily we
@@ -307,6 +319,12 @@ async fn main() -> Result<()> {
                     .hide(true)
                     .action(ArgAction::Version))
             .arg(
+                Arg::new("devel")
+                    .long("devel")
+                    .long_help("Enable development mode")
+                    .global(true)
+                    .action(ArgAction::SetTrue))
+            .arg(
                 Arg::new("repository")
                     .action(ArgAction::Set)
                     .required(true)
@@ -317,6 +335,10 @@ async fn main() -> Result<()> {
                     .required(true)
                     .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
             .get_matches();
+
+    let devel = *matches
+        .get_one::<bool>("devel")
+        .unwrap_or(&false);
 
     let repository = matches
         .get_one::<String>("repository")
@@ -345,6 +367,7 @@ async fn main() -> Result<()> {
         owner,
         repository,
         workflow,
+        devel,
     };
 
     let runs: Vec<String> = retrieve_workflow_runs(&api).await?;
