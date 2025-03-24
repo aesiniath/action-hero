@@ -147,6 +147,18 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
             .as_array()
             .expect("Expected steps to be an array");
 
+        // get job started_at time
+        let job_start = job["started_at"]
+            .as_str()
+            .unwrap();
+        let job_start = OffsetDateTime::parse(job_start, &Rfc3339).unwrap();
+
+        let delta = if config.devel {
+            config.program_start - job_start
+        } else {
+            Duration::ZERO
+        };
+
         for step in steps {
             let step_name = step["name"]
                 .as_str()
@@ -161,10 +173,12 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
                 .as_str()
                 .unwrap();
 
-            // convert start and stop times to a suitable DateTime type
+            // convert start and stop times to a suitable DateTime type. We
+            // add "delta" to reset the origin to the program start time if
+            // doing development.
 
-            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap();
-            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap();
+            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap() + delta;
+            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap() + delta;
 
             let step_duration = step_finish - step_start;
 
@@ -338,6 +352,8 @@ async fn main() -> Result<()> {
                     .required(true)
                     .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
             .get_matches();
+    // when developing we reset all the start times to be offset from when
+    // this program started running.
 
     let devel = *matches
         .get_one::<bool>("devel")
