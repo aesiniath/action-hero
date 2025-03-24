@@ -13,7 +13,7 @@ use std::process;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 use sha2::Digest;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
 use tracing_subscriber;
@@ -36,8 +36,9 @@ struct API {
 /// to construct). This function converts from the OffsetDateTime produced by
 /// the *time* crate's parser to SystemTime.
 fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
-    let unix_timestamp = datetime.unix_timestamp();
-    SystemTime::UNIX_EPOCH + Duration::from_secs(unix_timestamp as u64)
+    datetime
+        .to_offset(time::UtcOffset::UTC)
+        .into()
 }
 
 fn form_trace_id(config: &API, run_id: &str) -> TraceId {
