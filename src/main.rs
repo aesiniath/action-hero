@@ -9,6 +9,7 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use std::process;
+use time::Duration;
 // use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
@@ -28,6 +29,7 @@ struct API {
     repository: String,
     workflow: String,
     devel: bool,
+    program_start: OffsetDateTime,
 }
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
@@ -133,7 +135,7 @@ async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<Value>> {
     Ok(jobs)
 }
 
-fn display_job_steps(parent: &Context, jobs: &Vec<serde_json::Value>) {
+fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Value>) {
     for job in jobs {
         let job_name = job["name"]
             .as_str()
@@ -341,6 +343,11 @@ async fn main() -> Result<()> {
         .get_one::<bool>("devel")
         .unwrap_or(&false);
 
+    let program_start = OffsetDateTime::now_utc();
+
+    // Now we get the details of what repository we're going to get the Action
+    // history from.
+
     let repository = matches
         .get_one::<String>("repository")
         .unwrap()
@@ -363,15 +370,16 @@ async fn main() -> Result<()> {
 
     let client = setup_api_client()?;
 
-    let api = API {
+    let config = API {
         client,
         owner,
         repository,
         workflow,
         devel,
+        program_start,
     };
 
-    let runs: Vec<String> = retrieve_workflow_runs(&api).await?;
+    let runs: Vec<String> = retrieve_workflow_runs(&config).await?;
 
     println!("runs: {:#?}", runs);
 
@@ -383,11 +391,11 @@ async fn main() -> Result<()> {
         .as_ref();
     debug!(run_id);
 
-    let root = establish_root_span(&api, &run_id);
+    let root = establish_root_span(&config, &run_id);
 
-    let jobs: Vec<Value> = retrieve_run_jobs(&api, &run_id).await?;
+    let jobs: Vec<Value> = retrieve_run_jobs(&config, &run_id).await?;
 
-    display_job_steps(&root, &jobs);
+    display_job_steps(&config, &root, &jobs);
 
     // Ensure all spans are exported before the program exits
     provider.shutdown()?;
