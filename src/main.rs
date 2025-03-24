@@ -187,7 +187,7 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
             // Get read to send OpenTelemetry data
 
             let provider = global::tracer_provider();
-            let tracer = provider.tracer("fixme-1");
+            let tracer = provider.tracer(module_path!());
 
             // And now at last we create a span. It's not clear if setting the
             // end time does any good here, as we have to close a span with a
@@ -269,7 +269,7 @@ fn establish_root_span(config: &API, run_id: &str) -> Context {
     let context = Context::new().with_remote_span_context(span_context);
 
     let provider = global::tracer_provider();
-    let tracer = provider.tracer("action-hero-5"); // FIXME what is this name used for?
+    let tracer = provider.tracer(module_path!());
 
     let builder = SpanBuilder::from_name("FIXME");
     let span = tracer.build_with_context(builder, &context);
