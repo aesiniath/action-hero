@@ -12,6 +12,7 @@ use std::process;
 use time::Duration;
 // use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 use std::time::SystemTime;
