@@ -387,7 +387,17 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     )
     .with_start_time(run.created_at);
 
-    let span = tracer.build_with_context(builder, &context);
+    let mut span = tracer.build_with_context(builder, &context);
+    span.set_attribute(KeyValue::new(
+        "status",
+        run.status
+            .to_owned(),
+    ));
+    span.set_attribute(KeyValue::new(
+        "conclusion",
+        run.conclusion
+            .to_owned(),
+    ));
 
     // more non-obvious: set the span into the Context,
     let context = context.with_span(span);
@@ -396,7 +406,7 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     context
 }
 
-fn finalize_root_span(context: &Context, earliest_start: SystemTime, latest_finish: SystemTime) {
+fn finalize_root_span(context: &Context, _earliest_start: SystemTime, latest_finish: SystemTime) {
     let span = context.span();
     let span_context = span.span_context();
     let trace_id = span_context.trace_id();
