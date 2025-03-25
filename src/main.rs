@@ -73,16 +73,26 @@ fn form_trace_id(config: &API, run_id: &str) -> TraceId {
     TraceId::from_bytes(lower)
 }
 
-async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
+#[derive(Debug)]
+struct WorkflowRun {
+    run_id: String,
+    name: String,
+    status: String,
+    conclusion: String,
+    created_at: SystemTime,
+    delta: Duration,
+}
+
+async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
 
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
-        api.owner, api.repository, api.workflow
+        config.owner, config.repository, config.workflow
     );
     debug!(?url);
 
-    let response = api
+    let response = config
         .client
         .get(&url)
         .send()
@@ -93,7 +103,7 @@ async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
         .json()
         .await?;
 
-    let runs: Vec<String> = body["workflow_runs"]
+    let runs: Vec<WorkflowRun> = body["workflow_runs"]
         .as_array()
         .expect("Expected workflow_runs to be an array")
         .iter()
@@ -109,15 +119,15 @@ async fn retrieve_workflow_runs(api: &API) -> Result<Vec<String>> {
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(api: &API, run_id: &str) -> Result<Vec<Value>> {
+async fn retrieve_run_jobs(config: &API, run : &WorkflowRun) -> Result<Vec<Value>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
-        api.owner, api.repository, run_id
+        config.owner, config.repository, run.run_id
     );
 
     debug!(?url);
 
-    let response = api
+    let response = config
         .client
         .get(url)
         .send()
@@ -395,23 +405,16 @@ async fn main() -> Result<()> {
         program_start,
     };
 
-    let runs: Vec<String> = retrieve_workflow_runs(&config).await?;
-
-    println!("runs: {:#?}", runs);
+    let runs: Vec<WorkflowRun> = retrieve_workflow_runs(&config).await?;
 
     // temporarily take just the first run in the list
 
-    let run_id: &str = runs
+    let run : WorkflowRun = runs
         .first()
-        .unwrap()
-        .as_ref();
-    debug!(run_id);
+        .unwrap();
+    // debug!(run_id);
 
-    let root = establish_root_span(&config, &run_id);
-
-    let jobs: Vec<Value> = retrieve_run_jobs(&config, &run_id).await?;
-
-    display_job_steps(&config, &root, &jobs);
+    process_run(&config, &run).await?;
 
     // Ensure all spans are exported before the program exits
     provider.shutdown()?;
