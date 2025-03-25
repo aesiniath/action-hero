@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 use std::time::SystemTime;
+use time::serde::rfc3339;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
 use tracing_subscriber;
@@ -162,7 +163,24 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkflowJob {
+    name: String,
+    head_branch: String,
+    status: String,
+    conclusion: String,
+    #[serde(with = "rfc3339")]
+    started_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    completed_at: OffsetDateTime,
+}
+
+#[derive(Deserialize)]
+struct ResponseJobs {
+    jobs: Vec<WorkflowJob>,
+}
+
+async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         config.owner, config.repository, run.run_id
@@ -177,15 +195,10 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>
         .await?;
 
     let body = response
-        .json::<serde_json::Value>()
+        .json::<ResponseJobs>()
         .await?;
 
-    let jobs: Vec<Value> = body["jobs"]
-        .as_array()
-        .expect("Expected jobs to be an array")
-        .to_vec();
-
-    Ok(jobs)
+    Ok(body.jobs)
 }
 
 // returns the earliest start and latest finishing time of jobs seen within
@@ -195,7 +208,7 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>
 fn display_job_steps(
     context: &Context,
     run: &WorkflowRun,
-    jobs: &Vec<serde_json::Value>,
+    jobs: &Vec<WorkflowJob>,
 ) -> (SystemTime, SystemTime) {
     let mut earliest_start = SystemTime::now();
     let mut latest_finish = SystemTime::UNIX_EPOCH;
@@ -433,7 +446,7 @@ fn finalize_root_span(context: &Context, _earliest_start: SystemTime, latest_fin
 async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
     let context = establish_root_context(&config, &run);
 
-    let jobs: Vec<Value> = retrieve_run_jobs(&config, &run).await?;
+    let jobs: Vec<WorkflowJob> = retrieve_run_jobs(&config, &run).await?;
 
     let (earliest, latest) = display_job_steps(&context, &run, &jobs);
 
