@@ -109,17 +109,55 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
         .iter()
         .take(10)
         .map(|workflow_run| {
-            workflow_run["id"]
+            let run_id = workflow_run["id"]
                 .as_i64()
                 .expect("Expected run ID to be present and non-empty")
-                .to_string()
+                .to_string();
+
+            let name = workflow_run["name"]
+                .as_str()
+                .expect("Expected run name to be present and non-empty")
+                .to_string();
+
+            let status = workflow_run["status"]
+                .as_str()
+                .expect("Expected run status to be present and non-empty")
+                .to_string();
+
+            let conclusion = workflow_run["conclusion"]
+                .as_str()
+                .expect("Expected run conclusion to be present and non-empty")
+                .to_string();
+
+            let created_at = workflow_run["created_at"]
+                .as_str()
+                .expect("Expected run created_at to be present and non-empty")
+                .to_string();
+            let created_at = OffsetDateTime::parse(&created_at, &Rfc3339).unwrap();
+            let delta = if config.devel {
+                config.program_start - created_at
+            } else {
+                Duration::ZERO
+            };
+            let created_at = created_at + delta;
+
+            let created_at = convert_to_system_time(&created_at);
+
+            WorkflowRun {
+                run_id,
+                name,
+                status,
+                conclusion,
+                created_at,
+                delta,
+            }
         })
         .collect();
 
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(config: &API, run : &WorkflowRun) -> Result<Vec<Value>> {
+async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         config.owner, config.repository, run.run_id
@@ -145,7 +183,21 @@ async fn retrieve_run_jobs(config: &API, run : &WorkflowRun) -> Result<Vec<Value
     Ok(jobs)
 }
 
-fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Value>) {
+// returns the earliest start and latest finishing time of jobs seen within
+// the run, so the root span can be updated accordingly. We originally had
+// "context" named "parent" was a somewhat misleading name; it is the current
+// Context _containing_ a span and as such will become the parent.
+fn display_job_steps(
+    config: &API,
+    context: &Context,
+    jobs: &Vec<serde_json::Value>,
+) -> (SystemTime, SystemTime) {
+    let mut earliest_start = SystemTime::now();
+    let mut latest_finish = SystemTime::UNIX_EPOCH;
+
+    let provider = global::tracer_provider();
+    let tracer = provider.tracer(module_path!());
+
     for job in jobs {
         let job_name = job["name"]
             .as_str()
@@ -157,18 +209,51 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
             .as_array()
             .expect("Expected steps to be an array");
 
-        // get job started_at time
+        // get job start and end times
         let job_start = job["started_at"]
             .as_str()
             .unwrap();
         let job_start = OffsetDateTime::parse(job_start, &Rfc3339).unwrap();
 
+        let job_finish = job["completed_at"]
+            .as_str()
+            .unwrap();
+        let job_finish = OffsetDateTime::parse(job_finish, &Rfc3339).unwrap();
+
+        // calculate the change to the origin time if we are in development
+        // mode. This delta will be added to all timestamps to bring them to
+        // near program start time (ie now).
         let delta = if config.devel {
             config.program_start - job_start
         } else {
             Duration::ZERO
         };
 
+        let job_start = job_start + delta;
+        let job_finish = job_finish + delta;
+
+        let job_start = convert_to_system_time(&job_start);
+        let job_finish = convert_to_system_time(&job_finish);
+
+        // setup a new child span
+        let builder = SpanBuilder::from_name(job_name.to_owned())
+            .with_start_time(job_start)
+            .with_end_time(job_finish);
+
+        let mut span = tracer.build_with_context(builder, &context);
+
+        let job_conclusion = job["conclusion"]
+            .as_str()
+            .unwrap();
+        span.set_attribute(KeyValue::new("conclusion", job_conclusion.to_owned()));
+
+        let head_branch = job["head_branch"]
+            .as_str()
+            .unwrap();
+        span.set_attribute(KeyValue::new("head_branch", head_branch.to_owned()));
+
+        // now iterate through the steps of this job, and extract the details
+        // to be put onto individual grandchild spans.
         for step in steps {
             let step_name = step["name"]
                 .as_str()
@@ -196,9 +281,6 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
 
             // Get read to send OpenTelemetry data
 
-            let provider = global::tracer_provider();
-            let tracer = provider.tracer(module_path!());
-
             // And now at last we create a span. It's not clear if setting the
             // end time does any good here, as we have to close a span with a
             // timestamp (otherwise it gets told to be now() from a few
@@ -207,16 +289,32 @@ fn display_job_steps(config: &API, parent: &Context, jobs: &Vec<serde_json::Valu
             let step_start = convert_to_system_time(&step_start);
             let step_finish = convert_to_system_time(&step_finish);
 
-            let mut span = SpanBuilder::from_name(step_name.to_owned())
+            let builder = SpanBuilder::from_name(step_name.to_owned())
                 .with_start_time(step_start)
-                .with_end_time(step_finish)
-                .start_with_context(&tracer, parent);
+                .with_end_time(step_finish);
 
+            // because context has a current Span present within it this
+            // will create the new Span as a child of that one as parent!
+            let mut span = tracer.build_with_context(builder, context);
             span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
 
             span.end_with_timestamp(step_finish);
         }
+
+        // finalize the enclosing job span and send. We kept this in scope
+        // while the spans were created around individual steps so they would
+        // be children of this job's span.
+        span.end_with_timestamp(job_finish);
+
+        if job_start < earliest_start {
+            earliest_start = job_start;
+        }
+        if job_finish > latest_finish {
+            latest_finish = job_finish;
+        }
     }
+
+    (earliest_start, latest_finish)
 }
 
 fn setup_api_client() -> Result<reqwest::Client> {
@@ -260,12 +358,15 @@ fn setup_api_client() -> Result<reqwest::Client> {
     Ok(client)
 }
 
-fn establish_root_span(config: &API, run_id: &str) -> Context {
-    let trace_id = form_trace_id(&config, &run_id);
+fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
+    let provider = global::tracer_provider();
+    let tracer = provider.tracer(module_path!());
+
+    let trace_id = form_trace_id(&config, &run.run_id);
 
     // this is meant to be the immutable, reusable part of a trace that can be
     // propagated to a remote process (or received from a invoking parent). In our
-    // case we just need to control the values being used.
+    // case we just need to control the TraceId value being used.
     let span_context = SpanContext::new(
         trace_id,
         SpanId::INVALID,
@@ -278,13 +379,43 @@ fn establish_root_span(config: &API, run_id: &str) -> Context {
     // unhelpful to say the least.
     let context = Context::new().with_remote_span_context(span_context);
 
-    let provider = global::tracer_provider();
-    let tracer = provider.tracer(module_path!());
+    let builder = SpanBuilder::from_name(
+        run.name
+            .to_owned(),
+    )
+    .with_start_time(run.created_at);
 
-    let builder = SpanBuilder::from_name("FIXME");
     let span = tracer.build_with_context(builder, &context);
+
+    // more non-obvious: set the span into the Context,
     let context = context.with_span(span);
+
+    // and return it
     context
+}
+
+fn finalize_root_span(context: &Context, earliest_start: SystemTime, latest_finish: SystemTime) {
+    let span = context.span();
+    let span_context = span.span_context();
+    let span_id = span_context.span_id();
+
+    debug!(?span_id);
+
+    // this SHOULD be the root span!
+    span.set_attribute(KeyValue::new("debug.omega", true));
+    span.end_with_timestamp(latest_finish);
+}
+
+async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
+    let context = establish_root_context(&config, &run);
+
+    let jobs: Vec<Value> = retrieve_run_jobs(&config, &run).await?;
+
+    let (earliest, latest) = display_job_steps(&config, &context, &jobs);
+
+    finalize_root_span(&context, earliest, latest);
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -409,10 +540,10 @@ async fn main() -> Result<()> {
 
     // temporarily take just the first run in the list
 
-    let run : WorkflowRun = runs
+    let run = runs
         .first()
         .unwrap();
-    // debug!(run_id);
+    debug!(run.run_id);
 
     process_run(&config, &run).await?;
 
