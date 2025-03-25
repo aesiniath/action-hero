@@ -240,7 +240,14 @@ fn display_job_steps(
             .with_start_time(job_start)
             .with_end_time(job_finish);
 
-        let mut span = tracer.build_with_context(builder, &context);
+        let span = tracer.build_with_context(builder, &context);
+
+        // and again non-obviously, although the Job span is now a child, the
+        // context still has the root span in it. We need to get a new context
+        // before creating spans around the Steps.
+        let context = context.with_span(span);
+        // and stupidly, get it out again
+        let span = context.span();
 
         let job_conclusion = job["conclusion"]
             .as_str()
@@ -295,7 +302,7 @@ fn display_job_steps(
 
             // because context has a current Span present within it this
             // will create the new Span as a child of that one as parent!
-            let mut span = tracer.build_with_context(builder, context);
+            let mut span = tracer.build_with_context(builder, &context);
             span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
 
             span.end_with_timestamp(step_finish);
