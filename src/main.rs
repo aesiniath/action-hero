@@ -134,6 +134,10 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
                 .expect("Expected run created_at to be present and non-empty")
                 .to_string();
             let created_at = OffsetDateTime::parse(&created_at, &Rfc3339).unwrap();
+
+            // calculate the change to the origin time if we are in development
+            // mode. This delta will be added to all timestamps to bring them to
+            // near program start time (ie now).
             let delta = if config.devel {
                 config.program_start - created_at
             } else {
@@ -188,8 +192,8 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>
 // "context" named "parent" was a somewhat misleading name; it is the current
 // Context _containing_ a span and as such will become the parent.
 fn display_job_steps(
-    config: &API,
     context: &Context,
+    run: &WorkflowRun,
     jobs: &Vec<serde_json::Value>,
 ) -> (SystemTime, SystemTime) {
     let mut earliest_start = SystemTime::now();
@@ -220,17 +224,8 @@ fn display_job_steps(
             .unwrap();
         let job_finish = OffsetDateTime::parse(job_finish, &Rfc3339).unwrap();
 
-        // calculate the change to the origin time if we are in development
-        // mode. This delta will be added to all timestamps to bring them to
-        // near program start time (ie now).
-        let delta = if config.devel {
-            config.program_start - job_start
-        } else {
-            Duration::ZERO
-        };
-
-        let job_start = job_start + delta;
-        let job_finish = job_finish + delta;
+        let job_start = job_start + run.delta;
+        let job_finish = job_finish + run.delta;
 
         let job_start = convert_to_system_time(&job_start);
         let job_finish = convert_to_system_time(&job_finish);
@@ -279,8 +274,8 @@ fn display_job_steps(
             // add "delta" to reset the origin to the program start time if
             // doing development.
 
-            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap() + delta;
-            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap() + delta;
+            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap() + run.delta;
+            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap() + run.delta;
 
             let step_duration = step_finish - step_start;
 
@@ -404,9 +399,11 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
 fn finalize_root_span(context: &Context, earliest_start: SystemTime, latest_finish: SystemTime) {
     let span = context.span();
     let span_context = span.span_context();
+    let trace_id = span_context.trace_id();
     let span_id = span_context.span_id();
 
     debug!(?span_id);
+    debug!(?trace_id);
 
     // this SHOULD be the root span!
     span.set_attribute(KeyValue::new("debug.omega", true));
@@ -418,7 +415,7 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
     let jobs: Vec<Value> = retrieve_run_jobs(&config, &run).await?;
 
-    let (earliest, latest) = display_job_steps(&config, &context, &jobs);
+    let (earliest, latest) = display_job_steps(&context, &run, &jobs);
 
     finalize_root_span(&context, earliest, latest);
 
