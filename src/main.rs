@@ -375,13 +375,36 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
 
     let mut span = tracer.build_with_context(builder, &context);
     span.set_attribute(KeyValue::new(
-        "status",
-        run.status
+        "owner",
+        config
+            .owner
+            .to_owned(),
+    ));
+    span.set_attribute(KeyValue::new(
+        "repository",
+        config
+            .repository
+            .to_owned(),
+    ));
+    span.set_attribute(KeyValue::new(
+        "workflow",
+        config
+            .workflow
+            .to_owned(),
+    ));
+    span.set_attribute(KeyValue::new(
+        "run_id",
+        run.run_id
             .to_owned(),
     ));
     span.set_attribute(KeyValue::new(
         "conclusion",
         run.conclusion
+            .to_owned(),
+    ));
+    span.set_attribute(KeyValue::new(
+        "status",
+        run.status
             .to_owned(),
     ));
 
