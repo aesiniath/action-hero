@@ -327,32 +327,18 @@ fn setup_api_client() -> Result<reqwest::Client> {
     // the GitHub API.
     let mut headers = HeaderMap::new();
 
-    let mut auth: HeaderValue = format!("Bearer {}", token)
-        .parse()
-        .unwrap();
+    // .parse() is needed here and below to get from &str to HeaderValue.
+
+    let mut auth: HeaderValue = format!("Bearer {}", token).parse()?;
     auth.set_sensitive(true);
     headers.insert("Authorization", auth);
 
-    headers.insert(
-        "Accept",
-        "application/vnd.github+json"
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("Accept", "application/vnd.github+json".parse()?);
 
-    headers.insert(
-        "User-Agent",
-        format!("action-hero/{}", VERSION)
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("User-Agent", format!("action-hero/{}", VERSION).parse()?);
 
-    headers.insert(
-        "X-GitHub-Api-Version",
-        "2022-11-28"
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("X-GitHub-Api-Version", "2022-11-28".parse()?);
+
     let client = reqwest::Client::builder()
         .default_headers(headers)
         .build()?;
