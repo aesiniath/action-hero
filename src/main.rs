@@ -173,6 +173,18 @@ struct WorkflowJob {
     started_at: OffsetDateTime,
     #[serde(with = "rfc3339")]
     completed_at: OffsetDateTime,
+    steps: Vec<WorkflowStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkflowStep {
+    name: String,
+    status: String,
+    conclusion: String,
+    #[serde(with = "rfc3339")]
+    started_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    completed_at: OffsetDateTime,
 }
 
 #[derive(Deserialize)]
@@ -208,7 +220,7 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Workfl
 fn display_job_steps(
     context: &Context,
     run: &WorkflowRun,
-    jobs: &Vec<WorkflowJob>,
+    jobs: Vec<WorkflowJob>,
 ) -> (SystemTime, SystemTime) {
     let mut earliest_start = SystemTime::now();
     let mut latest_finish = SystemTime::UNIX_EPOCH;
@@ -218,10 +230,6 @@ fn display_job_steps(
 
     for job in jobs {
         println!("{}", job.name);
-
-        let steps = job["steps"]
-            .as_array()
-            .expect("Expected steps to be an array");
 
         // get job start and end times
         let job_start = job.started_at + run.delta;
@@ -250,30 +258,17 @@ fn display_job_steps(
 
         // now iterate through the steps of this job, and extract the details
         // to be put onto individual grandchild spans.
-        for step in steps {
-            let step_name = step["name"]
-                .as_str()
-                .unwrap();
-            let step_status = step["status"]
-                .as_str()
-                .unwrap();
-            let step_start = step["started_at"]
-                .as_str()
-                .unwrap();
-            let step_finish = step["completed_at"]
-                .as_str()
-                .unwrap();
-
+        for step in job.steps {
             // convert start and stop times to a suitable DateTime type. We
             // add "delta" to reset the origin to the program start time if
             // doing development.
 
-            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap() + run.delta;
-            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap() + run.delta;
+            let step_start = step.started_at + run.delta;
+            let step_finish = step.completed_at + run.delta;
 
             let step_duration = step_finish - step_start;
 
-            println!("    {}: {}, {}", step_name, step_status, step_duration);
+            println!("    {}: {}, {}", step.name, step.status, step_duration);
 
             // Get read to send OpenTelemetry data
 
@@ -285,14 +280,14 @@ fn display_job_steps(
             let step_start = convert_to_system_time(&step_start);
             let step_finish = convert_to_system_time(&step_finish);
 
-            let builder = SpanBuilder::from_name(step_name.to_owned())
+            let builder = SpanBuilder::from_name(step.name)
                 .with_start_time(step_start)
                 .with_end_time(step_finish);
 
             // because context has a current Span present within it this
             // will create the new Span as a child of that one as parent!
             let mut span = tracer.build_with_context(builder, &context);
-            span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
+            span.set_attribute(KeyValue::new("status", step.status));
 
             span.end_with_timestamp(step_finish);
         }
@@ -428,7 +423,7 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
     let jobs: Vec<WorkflowJob> = retrieve_run_jobs(&config, &run).await?;
 
-    let (earliest, latest) = display_job_steps(&context, &run, &jobs);
+    let (earliest, latest) = display_job_steps(&context, &run, jobs);
 
     finalize_root_span(&context, earliest, latest);
 
