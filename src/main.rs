@@ -13,11 +13,10 @@ use time::Duration;
 // use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::Digest;
 use std::time::SystemTime;
+use time::OffsetDateTime;
 use time::serde::rfc3339;
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tracing::debug;
 use tracing_subscriber;
 
@@ -45,7 +44,7 @@ fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
         .into()
 }
 
-fn form_trace_id(config: &API, run_id: &str) -> TraceId {
+fn form_trace_id(config: &API, run_id: u64) -> TraceId {
     let input = format!(
         "{}:{}:{}:{}",
         config.owner, config.repository, config.workflow, run_id
@@ -75,14 +74,24 @@ fn form_trace_id(config: &API, run_id: &str) -> TraceId {
     TraceId::from_bytes(lower)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 struct WorkflowRun {
-    run_id: String,
+    #[serde(rename = "id")]
+    run_id: u64,
     name: String,
     status: String,
     conclusion: String,
-    created_at: SystemTime,
+    #[serde(with = "rfc3339")]
+    created_at: OffsetDateTime,
+    html_url: String,
+    // and now our fields that are NOT in the response object
+    #[serde(default)]
     delta: Duration,
+}
+
+#[derive(Deserialize)]
+struct ResponseRuns {
+    workflow_runs: Vec<WorkflowRun>,
 }
 
 async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
@@ -101,64 +110,26 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
         .await?;
 
     // retrieve the run ID of the most recent 10 runs
-    let body: Value = response
+    let body: ResponseRuns = response
         .json()
         .await?;
 
-    let runs: Vec<WorkflowRun> = body["workflow_runs"]
-        .as_array()
-        .expect("Expected workflow_runs to be an array")
-        .iter()
+    let mut runs: Vec<WorkflowRun> = body.workflow_runs;
+
+    for run in runs
+        .iter_mut()
         .take(10)
-        .map(|workflow_run| {
-            let run_id = workflow_run["id"]
-                .as_i64()
-                .expect("Expected run ID to be present and non-empty")
-                .to_string();
-
-            let name = workflow_run["name"]
-                .as_str()
-                .expect("Expected run name to be present and non-empty")
-                .to_string();
-
-            let status = workflow_run["status"]
-                .as_str()
-                .expect("Expected run status to be present and non-empty")
-                .to_string();
-
-            let conclusion = workflow_run["conclusion"]
-                .as_str()
-                .expect("Expected run conclusion to be present and non-empty")
-                .to_string();
-
-            let created_at = workflow_run["created_at"]
-                .as_str()
-                .expect("Expected run created_at to be present and non-empty")
-                .to_string();
-            let created_at = OffsetDateTime::parse(&created_at, &Rfc3339).unwrap();
-
-            // calculate the change to the origin time if we are in development
-            // mode. This delta will be added to all timestamps to bring them to
-            // near program start time (ie now).
-            let delta = if config.devel {
-                config.program_start - created_at
-            } else {
-                Duration::ZERO
-            };
-            let created_at = created_at + delta;
-
-            let created_at = convert_to_system_time(&created_at);
-
-            WorkflowRun {
-                run_id,
-                name,
-                status,
-                conclusion,
-                created_at,
-                delta,
-            }
-        })
-        .collect();
+    {
+        // calculate the change to the origin time if we are in development
+        // mode. This delta will be added to all timestamps to bring them to
+        // near program start time (ie now).
+        let delta = if config.devel {
+            config.program_start - run.created_at
+        } else {
+            Duration::ZERO
+        };
+        run.delta = delta;
+    }
 
     Ok(runs)
 }
@@ -346,7 +317,7 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
-    let trace_id = form_trace_id(&config, &run.run_id);
+    let trace_id = form_trace_id(&config, run.run_id);
 
     // this is meant to be the immutable, reusable part of a trace that can be
     // propagated to a remote process (or received from a invoking parent). In our
@@ -359,50 +330,54 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
         TraceState::NONE,
     );
 
+    let name = run
+        .name
+        .clone();
+    let owner = config
+        .owner
+        .clone();
+    let repository = config
+        .repository
+        .clone();
+    let workflow = config
+        .workflow
+        .clone();
+    let conclusion = run
+        .conclusion
+        .clone();
+    let status = run
+        .status
+        .clone();
+    let html_url = run
+        .html_url
+        .clone();
+
+    // adjust the span start time if we are in development mode
+    let created_at = run.created_at + run.delta;
+    let created_at = convert_to_system_time(&created_at);
+
     // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
     // unhelpful to say the least.
     let context = Context::new().with_remote_span_context(span_context);
 
-    let builder = SpanBuilder::from_name(
-        run.name
-            .to_owned(),
-    )
-    .with_start_time(run.created_at);
+    let builder = SpanBuilder::from_name(name).with_start_time(created_at);
 
+    // create the span that will be the root span
     let mut span = tracer.build_with_context(builder, &context);
-    span.set_attribute(KeyValue::new(
-        "owner",
-        config
-            .owner
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "repository",
-        config
-            .repository
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "workflow",
-        config
-            .workflow
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "run_id",
-        run.run_id
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "conclusion",
-        run.conclusion
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "status",
-        run.status
-            .to_owned(),
-    ));
+
+    span.set_attribute(KeyValue::new("owner", owner));
+
+    span.set_attribute(KeyValue::new("repository", repository));
+
+    span.set_attribute(KeyValue::new("workflow", workflow));
+
+    span.set_attribute(KeyValue::new("run_id", run.run_id as i64));
+
+    span.set_attribute(KeyValue::new("conclusion", conclusion));
+
+    span.set_attribute(KeyValue::new("status", status));
+
+    span.set_attribute(KeyValue::new("html_url", html_url));
 
     // more non-obvious: set the span into the Context,
     let context = context.with_span(span);
