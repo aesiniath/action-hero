@@ -165,6 +165,8 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorkflowJob {
+    #[serde(rename = "id")]
+    job_id: u64,
     name: String,
     head_branch: String,
     status: String,
@@ -174,6 +176,7 @@ struct WorkflowJob {
     #[serde(with = "rfc3339")]
     completed_at: OffsetDateTime,
     steps: Vec<WorkflowStep>,
+    html_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,9 +255,13 @@ fn display_job_steps(
         // and stupidly, get it out again
         let span = context.span();
 
+        span.set_attribute(KeyValue::new("job_id", job.job_id as i64));
+
         span.set_attribute(KeyValue::new("conclusion", job.conclusion));
 
         span.set_attribute(KeyValue::new("head_branch", job.head_branch));
+
+        span.set_attribute(KeyValue::new("html_url", job.html_url));
 
         // now iterate through the steps of this job, and extract the details
         // to be put onto individual grandchild spans.
