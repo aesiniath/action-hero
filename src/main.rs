@@ -195,14 +195,7 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Workfl
 // the run, so the root span can be updated accordingly. We originally had
 // "context" named "parent" was a somewhat misleading name; it is the current
 // Context _containing_ a span and as such will become the parent.
-fn display_job_steps(
-    context: &Context,
-    run: &WorkflowRun,
-    jobs: Vec<WorkflowJob>,
-) -> (SystemTime, SystemTime) {
-    let mut earliest_start = SystemTime::now();
-    let mut latest_finish = SystemTime::UNIX_EPOCH;
-
+fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<WorkflowJob>) {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
@@ -280,16 +273,7 @@ fn display_job_steps(
         // while the spans were created around individual steps so they would
         // be children of this job's span.
         span.end_with_timestamp(job_finish);
-
-        if job_start < earliest_start {
-            earliest_start = job_start;
-        }
-        if job_finish > latest_finish {
-            latest_finish = job_finish;
-        }
     }
-
-    (earliest_start, latest_finish)
 }
 
 fn setup_api_client() -> Result<reqwest::Client> {
@@ -419,7 +403,7 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
     let jobs: Vec<WorkflowJob> = retrieve_run_jobs(&config, &run).await?;
 
-    let (earliest, latest) = display_job_steps(&context, &run, jobs);
+    display_job_steps(&context, &run, jobs);
 
     finalize_root_span(&context, &run);
 
