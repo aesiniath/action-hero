@@ -85,6 +85,8 @@ struct WorkflowRun {
     conclusion: String,
     #[serde(with = "rfc3339")]
     created_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    updated_at: OffsetDateTime,
     html_url: String,
     // and now our fields that are NOT in the response object
     #[serde(default)]
@@ -360,13 +362,13 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
 
     // adjust the span start time if we are in development mode
     let created_at = run.created_at + run.delta;
-    let created_at = convert_to_system_time(&created_at);
+    let run_start = convert_to_system_time(&created_at);
 
     // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
     // unhelpful to say the least.
     let context = Context::new().with_remote_span_context(span_context);
 
-    let builder = SpanBuilder::from_name(name).with_start_time(created_at);
+    let builder = SpanBuilder::from_name(name).with_start_time(run_start);
 
     // create the span that will be the root span
     let mut span = tracer.build_with_context(builder, &context);
@@ -396,18 +398,20 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     context
 }
 
-fn finalize_root_span(context: &Context, _earliest_start: SystemTime, latest_finish: SystemTime) {
+fn finalize_root_span(context: &Context, run: &WorkflowRun) {
     let span = context.span();
     let span_context = span.span_context();
     let trace_id = span_context.trace_id();
     let span_id = span_context.span_id();
 
+    let run_finish = run.updated_at + run.delta;
+    let run_finish = convert_to_system_time(&run_finish);
     debug!(?span_id);
     debug!(?trace_id);
 
     // this SHOULD be the root span!
     span.set_attribute(KeyValue::new("debug.omega", true));
-    span.end_with_timestamp(latest_finish);
+    span.end_with_timestamp(run_finish);
 }
 
 async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
@@ -417,7 +421,7 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
     let (earliest, latest) = display_job_steps(&context, &run, jobs);
 
-    finalize_root_span(&context, earliest, latest);
+    finalize_root_span(&context, &run);
 
     Ok(())
 }
