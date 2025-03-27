@@ -442,7 +442,7 @@ async fn main() -> Result<()> {
     // providing a way to get a Tracer which in turn is the interface used for creating spans.
 
     let provider = SdkTracerProvider::builder()
-        .with_simple_exporter(exporter)
+        .with_batch_exporter(exporter)
         .with_resource(resource)
         .build();
 
