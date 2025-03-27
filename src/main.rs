@@ -217,35 +217,21 @@ fn display_job_steps(
     let tracer = provider.tracer(module_path!());
 
     for job in jobs {
-        let job_name = job["name"]
-            .as_str()
-            .unwrap();
-
-        println!("{}", job_name);
+        println!("{}", job.name);
 
         let steps = job["steps"]
             .as_array()
             .expect("Expected steps to be an array");
 
         // get job start and end times
-        let job_start = job["started_at"]
-            .as_str()
-            .unwrap();
-        let job_start = OffsetDateTime::parse(job_start, &Rfc3339).unwrap();
-
-        let job_finish = job["completed_at"]
-            .as_str()
-            .unwrap();
-        let job_finish = OffsetDateTime::parse(job_finish, &Rfc3339).unwrap();
-
-        let job_start = job_start + run.delta;
-        let job_finish = job_finish + run.delta;
+        let job_start = job.started_at + run.delta;
+        let job_finish = job.completed_at + run.delta;
 
         let job_start = convert_to_system_time(&job_start);
         let job_finish = convert_to_system_time(&job_finish);
 
         // setup a new child span
-        let builder = SpanBuilder::from_name(job_name.to_owned())
+        let builder = SpanBuilder::from_name(job.name)
             .with_start_time(job_start)
             .with_end_time(job_finish);
 
@@ -258,15 +244,9 @@ fn display_job_steps(
         // and stupidly, get it out again
         let span = context.span();
 
-        let job_conclusion = job["conclusion"]
-            .as_str()
-            .unwrap();
-        span.set_attribute(KeyValue::new("conclusion", job_conclusion.to_owned()));
+        span.set_attribute(KeyValue::new("conclusion", job.conclusion));
 
-        let head_branch = job["head_branch"]
-            .as_str()
-            .unwrap();
-        span.set_attribute(KeyValue::new("head_branch", head_branch.to_owned()));
+        span.set_attribute(KeyValue::new("head_branch", job.head_branch));
 
         // now iterate through the steps of this job, and extract the details
         // to be put onto individual grandchild spans.
