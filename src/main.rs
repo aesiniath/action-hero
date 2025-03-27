@@ -12,10 +12,11 @@ use std::process;
 use time::Duration;
 // use opentelemetry_stdout::SpanExporter;
 use reqwest::header::{HeaderMap, HeaderValue};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::time::SystemTime;
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::OffsetDateTime;
+use time::serde::rfc3339;
 use tracing::debug;
 use tracing_subscriber;
 
@@ -43,7 +44,7 @@ fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
         .into()
 }
 
-fn form_trace_id(config: &API, run_id: &str) -> TraceId {
+fn form_trace_id(config: &API, run_id: u64) -> TraceId {
     let input = format!(
         "{}:{}:{}:{}",
         config.owner, config.repository, config.workflow, run_id
@@ -73,14 +74,28 @@ fn form_trace_id(config: &API, run_id: &str) -> TraceId {
     TraceId::from_bytes(lower)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 struct WorkflowRun {
-    run_id: String,
+    #[serde(rename = "id")]
+    run_id: u64,
+    run_number: u64,
+    run_attempt: u64,
     name: String,
     status: String,
     conclusion: String,
-    created_at: SystemTime,
+    #[serde(with = "rfc3339")]
+    created_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    updated_at: OffsetDateTime,
+    html_url: String,
+    // and now our fields that are NOT in the response object
+    #[serde(default)]
     delta: Duration,
+}
+
+#[derive(Deserialize)]
+struct ResponseRuns {
+    workflow_runs: Vec<WorkflowRun>,
 }
 
 async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
@@ -99,69 +114,63 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
         .await?;
 
     // retrieve the run ID of the most recent 10 runs
-    let body: Value = response
+    let body: ResponseRuns = response
         .json()
         .await?;
 
-    let runs: Vec<WorkflowRun> = body["workflow_runs"]
-        .as_array()
-        .expect("Expected workflow_runs to be an array")
-        .iter()
+    let mut runs: Vec<WorkflowRun> = body.workflow_runs;
+
+    for run in runs
+        .iter_mut()
         .take(10)
-        .map(|workflow_run| {
-            let run_id = workflow_run["id"]
-                .as_i64()
-                .expect("Expected run ID to be present and non-empty")
-                .to_string();
-
-            let name = workflow_run["name"]
-                .as_str()
-                .expect("Expected run name to be present and non-empty")
-                .to_string();
-
-            let status = workflow_run["status"]
-                .as_str()
-                .expect("Expected run status to be present and non-empty")
-                .to_string();
-
-            let conclusion = workflow_run["conclusion"]
-                .as_str()
-                .expect("Expected run conclusion to be present and non-empty")
-                .to_string();
-
-            let created_at = workflow_run["created_at"]
-                .as_str()
-                .expect("Expected run created_at to be present and non-empty")
-                .to_string();
-            let created_at = OffsetDateTime::parse(&created_at, &Rfc3339).unwrap();
-
-            // calculate the change to the origin time if we are in development
-            // mode. This delta will be added to all timestamps to bring them to
-            // near program start time (ie now).
-            let delta = if config.devel {
-                config.program_start - created_at
-            } else {
-                Duration::ZERO
-            };
-            let created_at = created_at + delta;
-
-            let created_at = convert_to_system_time(&created_at);
-
-            WorkflowRun {
-                run_id,
-                name,
-                status,
-                conclusion,
-                created_at,
-                delta,
-            }
-        })
-        .collect();
+    {
+        // calculate the change to the origin time if we are in development
+        // mode. This delta will be added to all timestamps to bring them to
+        // near program start time (ie now).
+        let delta = if config.devel {
+            config.program_start - run.created_at - Duration::minutes(10)
+        } else {
+            Duration::ZERO
+        };
+        run.delta = delta;
+    }
 
     Ok(runs)
 }
 
-async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkflowJob {
+    #[serde(rename = "id")]
+    job_id: u64,
+    name: String,
+    head_branch: String,
+    status: String,
+    conclusion: String,
+    #[serde(with = "rfc3339")]
+    started_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    completed_at: OffsetDateTime,
+    steps: Vec<WorkflowStep>,
+    html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkflowStep {
+    name: String,
+    status: String,
+    conclusion: String,
+    #[serde(with = "rfc3339")]
+    started_at: OffsetDateTime,
+    #[serde(with = "rfc3339")]
+    completed_at: OffsetDateTime,
+}
+
+#[derive(Deserialize)]
+struct ResponseJobs {
+    jobs: Vec<WorkflowJob>,
+}
+
+async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         config.owner, config.repository, run.run_id
@@ -176,62 +185,32 @@ async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<Value>
         .await?;
 
     let body = response
-        .json::<serde_json::Value>()
+        .json::<ResponseJobs>()
         .await?;
 
-    let jobs: Vec<Value> = body["jobs"]
-        .as_array()
-        .expect("Expected jobs to be an array")
-        .to_vec();
-
-    Ok(jobs)
+    Ok(body.jobs)
 }
 
 // returns the earliest start and latest finishing time of jobs seen within
 // the run, so the root span can be updated accordingly. We originally had
 // "context" named "parent" was a somewhat misleading name; it is the current
 // Context _containing_ a span and as such will become the parent.
-fn display_job_steps(
-    context: &Context,
-    run: &WorkflowRun,
-    jobs: &Vec<serde_json::Value>,
-) -> (SystemTime, SystemTime) {
-    let mut earliest_start = SystemTime::now();
-    let mut latest_finish = SystemTime::UNIX_EPOCH;
-
+fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<WorkflowJob>) {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
     for job in jobs {
-        let job_name = job["name"]
-            .as_str()
-            .unwrap();
-
-        println!("{}", job_name);
-
-        let steps = job["steps"]
-            .as_array()
-            .expect("Expected steps to be an array");
+        println!("{}", job.name);
 
         // get job start and end times
-        let job_start = job["started_at"]
-            .as_str()
-            .unwrap();
-        let job_start = OffsetDateTime::parse(job_start, &Rfc3339).unwrap();
-
-        let job_finish = job["completed_at"]
-            .as_str()
-            .unwrap();
-        let job_finish = OffsetDateTime::parse(job_finish, &Rfc3339).unwrap();
-
-        let job_start = job_start + run.delta;
-        let job_finish = job_finish + run.delta;
+        let job_start = job.started_at + run.delta;
+        let job_finish = job.completed_at + run.delta;
 
         let job_start = convert_to_system_time(&job_start);
         let job_finish = convert_to_system_time(&job_finish);
 
         // setup a new child span
-        let builder = SpanBuilder::from_name(job_name.to_owned())
+        let builder = SpanBuilder::from_name(job.name)
             .with_start_time(job_start)
             .with_end_time(job_finish);
 
@@ -244,42 +223,29 @@ fn display_job_steps(
         // and stupidly, get it out again
         let span = context.span();
 
-        let job_conclusion = job["conclusion"]
-            .as_str()
-            .unwrap();
-        span.set_attribute(KeyValue::new("conclusion", job_conclusion.to_owned()));
+        span.set_attribute(KeyValue::new("job_id", job.job_id as i64));
 
-        let head_branch = job["head_branch"]
-            .as_str()
-            .unwrap();
-        span.set_attribute(KeyValue::new("head_branch", head_branch.to_owned()));
+        span.set_attribute(KeyValue::new("conclusion", job.conclusion));
+
+        span.set_attribute(KeyValue::new("status", job.status));
+
+        span.set_attribute(KeyValue::new("head_branch", job.head_branch));
+
+        span.set_attribute(KeyValue::new("html_url", job.html_url));
 
         // now iterate through the steps of this job, and extract the details
         // to be put onto individual grandchild spans.
-        for step in steps {
-            let step_name = step["name"]
-                .as_str()
-                .unwrap();
-            let step_status = step["status"]
-                .as_str()
-                .unwrap();
-            let step_start = step["started_at"]
-                .as_str()
-                .unwrap();
-            let step_finish = step["completed_at"]
-                .as_str()
-                .unwrap();
-
+        for step in job.steps {
             // convert start and stop times to a suitable DateTime type. We
             // add "delta" to reset the origin to the program start time if
             // doing development.
 
-            let step_start = OffsetDateTime::parse(step_start, &Rfc3339).unwrap() + run.delta;
-            let step_finish = OffsetDateTime::parse(step_finish, &Rfc3339).unwrap() + run.delta;
+            let step_start = step.started_at + run.delta;
+            let step_finish = step.completed_at + run.delta;
 
             let step_duration = step_finish - step_start;
 
-            println!("    {}: {}, {}", step_name, step_status, step_duration);
+            println!("    {}: {}, {}", step.name, step.status, step_duration);
 
             // Get read to send OpenTelemetry data
 
@@ -291,14 +257,14 @@ fn display_job_steps(
             let step_start = convert_to_system_time(&step_start);
             let step_finish = convert_to_system_time(&step_finish);
 
-            let builder = SpanBuilder::from_name(step_name.to_owned())
+            let builder = SpanBuilder::from_name(step.name)
                 .with_start_time(step_start)
                 .with_end_time(step_finish);
 
             // because context has a current Span present within it this
             // will create the new Span as a child of that one as parent!
             let mut span = tracer.build_with_context(builder, &context);
-            span.set_attribute(KeyValue::new("step.status", step_status.to_owned()));
+            span.set_attribute(KeyValue::new("status", step.status));
 
             span.end_with_timestamp(step_finish);
         }
@@ -307,16 +273,7 @@ fn display_job_steps(
         // while the spans were created around individual steps so they would
         // be children of this job's span.
         span.end_with_timestamp(job_finish);
-
-        if job_start < earliest_start {
-            earliest_start = job_start;
-        }
-        if job_finish > latest_finish {
-            latest_finish = job_finish;
-        }
     }
-
-    (earliest_start, latest_finish)
 }
 
 fn setup_api_client() -> Result<reqwest::Client> {
@@ -327,32 +284,18 @@ fn setup_api_client() -> Result<reqwest::Client> {
     // the GitHub API.
     let mut headers = HeaderMap::new();
 
-    let mut auth: HeaderValue = format!("Bearer {}", token)
-        .parse()
-        .unwrap();
+    // .parse() is needed here and below to get from &str to HeaderValue.
+
+    let mut auth: HeaderValue = format!("Bearer {}", token).parse()?;
     auth.set_sensitive(true);
     headers.insert("Authorization", auth);
 
-    headers.insert(
-        "Accept",
-        "application/vnd.github+json"
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("Accept", "application/vnd.github+json".parse()?);
 
-    headers.insert(
-        "User-Agent",
-        format!("action-hero/{}", VERSION)
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("User-Agent", format!("action-hero/{}", VERSION).parse()?);
 
-    headers.insert(
-        "X-GitHub-Api-Version",
-        "2022-11-28"
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("X-GitHub-Api-Version", "2022-11-28".parse()?);
+
     let client = reqwest::Client::builder()
         .default_headers(headers)
         .build()?;
@@ -364,7 +307,7 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
-    let trace_id = form_trace_id(&config, &run.run_id);
+    let trace_id = form_trace_id(&config, run.run_id);
 
     // this is meant to be the immutable, reusable part of a trace that can be
     // propagated to a remote process (or received from a invoking parent). In our
@@ -377,27 +320,60 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
         TraceState::NONE,
     );
 
+    let name = run
+        .name
+        .clone();
+    let owner = config
+        .owner
+        .clone();
+    let repository = config
+        .repository
+        .clone();
+    let workflow = config
+        .workflow
+        .clone();
+    let conclusion = run
+        .conclusion
+        .clone();
+    let status = run
+        .status
+        .clone();
+    let html_url = run
+        .html_url
+        .clone();
+    let run_number = run.run_number as i64;
+    let run_attempt = run.run_attempt as i64;
+
+    // adjust the span start time if we are in development mode
+    let created_at = run.created_at + run.delta;
+    let run_start = convert_to_system_time(&created_at);
+
     // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
     // unhelpful to say the least.
     let context = Context::new().with_remote_span_context(span_context);
 
-    let builder = SpanBuilder::from_name(
-        run.name
-            .to_owned(),
-    )
-    .with_start_time(run.created_at);
+    let builder = SpanBuilder::from_name(name).with_start_time(run_start);
 
+    // create the span that will be the root span
     let mut span = tracer.build_with_context(builder, &context);
-    span.set_attribute(KeyValue::new(
-        "status",
-        run.status
-            .to_owned(),
-    ));
-    span.set_attribute(KeyValue::new(
-        "conclusion",
-        run.conclusion
-            .to_owned(),
-    ));
+
+    span.set_attribute(KeyValue::new("owner", owner));
+
+    span.set_attribute(KeyValue::new("repository", repository));
+
+    span.set_attribute(KeyValue::new("workflow", workflow));
+
+    span.set_attribute(KeyValue::new("run_id", run.run_id as i64));
+
+    span.set_attribute(KeyValue::new("conclusion", conclusion));
+
+    span.set_attribute(KeyValue::new("status", status));
+
+    span.set_attribute(KeyValue::new("html_url", html_url));
+
+    span.set_attribute(KeyValue::new("run_number", run_number));
+
+    span.set_attribute(KeyValue::new("run_attempt", run_attempt));
 
     // more non-obvious: set the span into the Context,
     let context = context.with_span(span);
@@ -406,28 +382,30 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     context
 }
 
-fn finalize_root_span(context: &Context, _earliest_start: SystemTime, latest_finish: SystemTime) {
+fn finalize_root_span(context: &Context, run: &WorkflowRun) {
     let span = context.span();
     let span_context = span.span_context();
     let trace_id = span_context.trace_id();
     let span_id = span_context.span_id();
 
+    let run_finish = run.updated_at + run.delta;
+    let run_finish = convert_to_system_time(&run_finish);
     debug!(?span_id);
     debug!(?trace_id);
 
     // this SHOULD be the root span!
     span.set_attribute(KeyValue::new("debug.omega", true));
-    span.end_with_timestamp(latest_finish);
+    span.end_with_timestamp(run_finish);
 }
 
 async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
     let context = establish_root_context(&config, &run);
 
-    let jobs: Vec<Value> = retrieve_run_jobs(&config, &run).await?;
+    let jobs: Vec<WorkflowJob> = retrieve_run_jobs(&config, &run).await?;
 
-    let (earliest, latest) = display_job_steps(&context, &run, &jobs);
+    display_job_steps(&context, &run, jobs);
 
-    finalize_root_span(&context, earliest, latest);
+    finalize_root_span(&context, &run);
 
     Ok(())
 }
@@ -460,7 +438,7 @@ async fn main() -> Result<()> {
     // providing a way to get a Tracer which in turn is the interface used for creating spans.
 
     let provider = SdkTracerProvider::builder()
-        .with_simple_exporter(exporter)
+        .with_batch_exporter(exporter)
         .with_resource(resource)
         .build();
 
