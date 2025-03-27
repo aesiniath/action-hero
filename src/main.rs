@@ -124,7 +124,7 @@ async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
         // mode. This delta will be added to all timestamps to bring them to
         // near program start time (ie now).
         let delta = if config.devel {
-            config.program_start - run.created_at
+            config.program_start - run.created_at - Duration::minutes(10)
         } else {
             Duration::ZERO
         };
@@ -229,6 +229,8 @@ fn display_job_steps(
         span.set_attribute(KeyValue::new("job_id", job.job_id as i64));
 
         span.set_attribute(KeyValue::new("conclusion", job.conclusion));
+
+        span.set_attribute(KeyValue::new("status", job.status));
 
         span.set_attribute(KeyValue::new("head_branch", job.head_branch));
 
