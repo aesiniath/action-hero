@@ -78,6 +78,8 @@ fn form_trace_id(config: &API, run_id: u64) -> TraceId {
 struct WorkflowRun {
     #[serde(rename = "id")]
     run_id: u64,
+    run_number: u64,
+    run_attempt: u64,
     name: String,
     status: String,
     conclusion: String,
@@ -353,6 +355,8 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     let html_url = run
         .html_url
         .clone();
+    let run_number = run.run_number as i64;
+    let run_attempt = run.run_attempt as i64;
 
     // adjust the span start time if we are in development mode
     let created_at = run.created_at + run.delta;
@@ -380,6 +384,10 @@ fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
     span.set_attribute(KeyValue::new("status", status));
 
     span.set_attribute(KeyValue::new("html_url", html_url));
+
+    span.set_attribute(KeyValue::new("run_number", run_number));
+
+    span.set_attribute(KeyValue::new("run_attempt", run_attempt));
 
     // more non-obvious: set the span into the Context,
     let context = context.with_span(span);
