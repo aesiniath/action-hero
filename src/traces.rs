@@ -7,15 +7,13 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use std::process;
-use time::Duration;
 // use opentelemetry_stdout::SpanExporter;
-use reqwest::header::{HeaderMap, HeaderValue};
 use sha2::Digest;
 use std::time::SystemTime;
 use time::OffsetDateTime;
 use tracing::debug;
-use tracing_subscriber;
 
+use crate::VERSION;
 use crate::github::{API, WorkflowJob, WorkflowRun};
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
@@ -237,4 +235,37 @@ pub(crate) fn finalize_root_span(context: &Context, run: &WorkflowRun) {
     // this SHOULD be the root span!
     span.set_attribute(KeyValue::new("debug.omega", true));
     span.end_with_timestamp(run_finish);
+}
+
+pub(crate) fn setup_telemetry_machinery() -> SdkTracerProvider {
+    // Setup OpenTelemetry. First we establish a Resource, which is a set of reusable attributes and
+    // other characteristics which will be applied to all traces.
+
+    let resource = Resource::builder()
+        .with_attributes([
+            KeyValue::new(SERVICE_NAME, "github-builds"),
+            KeyValue::new(SERVICE_VERSION, VERSION),
+        ])
+        .build();
+
+    // Here we establish the SpanExporter subsystem that will transmit spans
+    // and events out via OTLP to an otel-collector and onward to Honeycomb.
+
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .build()
+        .unwrap();
+    // let exporter = SpanExporter::default();
+
+    // Now we bind this exporter and resource to a TracerProvider whose sole purpose appears to be
+    // providing a way to get a Tracer which in turn is the interface used for creating spans.
+
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build();
+
+    global::set_tracer_provider(provider.clone());
+
+    provider
 }

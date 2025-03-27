@@ -1,10 +1,5 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use opentelemetry::{KeyValue, global};
-use opentelemetry_otlp::SpanExporter;
-use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::trace::SdkTracerProvider;
-use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use time::OffsetDateTime;
 use tracing::debug;
 use tracing_subscriber;
@@ -30,40 +25,13 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize the tracing subscriber
+    // Initialize the logging subsystem
     tracing_subscriber::fmt::init();
 
-    // Setup OpenTelemetry. First we establish a Resource, which is a set of reusable attributes and
-    // other characteristics which will be applied to all traces.
-
-    let resource = Resource::builder()
-        .with_attributes([
-            KeyValue::new(SERVICE_NAME, "github-builds"),
-            KeyValue::new(SERVICE_VERSION, VERSION),
-        ])
-        .build();
-
-    // Here we establish the SpanExporter subsystem that will transmit spans
-    // and events out via OTLP to an otel-collector and onward to Honeycomb.
-
-    let exporter = SpanExporter::builder()
-        .with_tonic()
-        .build()
-        .unwrap();
-    // let exporter = SpanExporter::default();
-
-    // Now we bind this exporter and resource to a TracerProvider whose sole purpose appears to be
-    // providing a way to get a Tracer which in turn is the interface used for creating spans.
-
-    let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
-        .with_resource(resource)
-        .build();
-
-    global::set_tracer_provider(provider.clone());
+    // Initialize the opentelemetry exporter
+    let provider = traces::setup_telemetry_machinery();
 
     // Configure command-line argument parser
-
     let matches = Command::new("hero")
             .version(VERSION)
             .propagate_version(true)
@@ -103,6 +71,7 @@ async fn main() -> Result<()> {
                     .required(true)
                     .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
             .get_matches();
+
     // when developing we reset all the start times to be offset from when
     // this program started running.
 
