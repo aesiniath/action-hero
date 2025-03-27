@@ -7,6 +7,7 @@ use tracing_subscriber;
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 mod github;
+mod history;
 mod traces;
 
 use github::{API, WorkflowJob, WorkflowRun};
@@ -30,6 +31,8 @@ async fn main() -> Result<()> {
 
     // Initialize the opentelemetry exporter
     let provider = traces::setup_telemetry_machinery();
+
+    history::ensure_record_directory()?;
 
     // Configure command-line argument parser
     let matches = Command::new("hero")
