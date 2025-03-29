@@ -122,6 +122,12 @@ async fn main() -> Result<()> {
 
     // temporarily take just the first run in the list
 
+    for run in runs {
+        if history::check_is_submitted(&config, &run)? {
+            continue;
+        }
+    }
+
     let run = runs
         .first()
         .unwrap();
