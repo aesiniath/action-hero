@@ -25,20 +25,41 @@ fn form_record_directory(prefix: &str, config: &API) -> PathBuf {
     path.to_path_buf()
 }
 
-fn form_record_filename(directory: &Path, run: &WorkflowRun) -> PathBuf {
+pub(crate) fn form_record_filename(prefix: &str, config: &API, run: &WorkflowRun) -> PathBuf {
     let id = format!("{}", run.run_id);
 
+    let name = format!(
+        "{}/{}/{}/{}",
+        prefix, config.owner, config.repository, config.workflow
+    );
+
+    let directory = Path::new(&name);
     let path = directory.join(id);
     path
 }
 
-pub(crate) fn check_is_submitted(config: &API, run: &WorkflowRun) -> Result<bool> {
-    let directory = form_record_directory(PREFIX, config);
+pub(crate) fn check_is_submitted(path: &Path) -> Result<bool> {
+    let directory = path
+        .parent()
+        .unwrap();
+    debug!(?directory);
+
     if !directory.exists() {
-        std::fs::create_dir(&directory)?;
+        std::fs::create_dir_all(&directory)?;
     }
 
-    let filename = form_record_filename(&directory, run);
+    debug!(?path);
 
-    Ok(false)
+    let probe = path.exists();
+    Ok(probe)
+}
+
+pub(crate) fn mark_run_submitted(path: &Path) -> Result<()> {
+    if !path.exists() {
+        // create empty file
+        info!("Creating stamp file");
+        std::fs::write(&path, [])?;
+    }
+
+    Ok(())
 }

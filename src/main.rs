@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
     // temporarily take just the first run in the list
 
     for run in &runs {
-        let path = form_record_filename(PREFIX, &config, run);
+        let path = history::form_record_filename(PREFIX, &config, run);
 
         if history::check_is_submitted(&path)? {
             continue;
