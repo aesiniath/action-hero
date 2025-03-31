@@ -62,6 +62,12 @@ async fn main() -> Result<()> {
                     .hide(true)
                     .action(ArgAction::Version))
             .arg(
+                Arg::new("count")
+                    .long("count" )
+                    .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
+                    .global(true)
+                )
+            .arg(
                 Arg::new("repository")
                     .action(ArgAction::Set)
                     .required(true)
@@ -116,7 +122,15 @@ async fn main() -> Result<()> {
         program_start,
     };
 
-    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config).await?;
+    let count = matches.get_one::<String>("count");
+    let count = match count {
+        None => 10,
+        Some(value) => value
+            .parse::<u32>()
+            .expect("Unable to parse supplied --count value"),
+    };
+
+    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, count).await?;
 
     for run in &runs {
         let path = history::form_record_filename(PREFIX, &config, run);
