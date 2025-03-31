@@ -1,6 +1,6 @@
 [package]
 name = "hero"
-description = "Send GitHub Actions workflow history to OpenTelemetry as spans and traces"
+description = "Send GitHub Actions workflow history to OpenTelemetry as traces and spans"
 version = "0.1.0"
 edition = "2024"
 
