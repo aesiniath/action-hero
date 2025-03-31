@@ -14,7 +14,7 @@ mod traces;
 
 use github::{API, WorkflowJob, WorkflowRun};
 
-async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
+async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
     info!("Processing run {}", run.run_id);
 
     let context = traces::establish_root_context(&config, &run);
@@ -23,9 +23,9 @@ async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
 
     traces::display_job_steps(&context, &run, jobs);
 
-    traces::finalize_root_span(&context, &run);
+    let trace_id = traces::finalize_root_span(&context, &run);
 
-    Ok(())
+    Ok(trace_id)
 }
 
 #[tokio::main]
@@ -133,9 +133,9 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        process_run(&config, &run).await?;
+        let trace_id = process_run(&config, &run).await?;
 
-        history::mark_run_submitted(&path)?;
+        history::mark_run_submitted(&path, trace_id)?;
     }
 
     // Ensure all spans are exported before the program exits

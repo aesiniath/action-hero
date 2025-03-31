@@ -43,11 +43,12 @@ pub(crate) fn check_is_submitted(path: &Path) -> Result<bool> {
     Ok(probe)
 }
 
-pub(crate) fn mark_run_submitted(path: &Path) -> Result<()> {
+pub(crate) fn mark_run_submitted(path: &Path, trace_id: String) -> Result<()> {
     if !path.exists() {
         // create empty file
         info!("Recording Run completion");
-        std::fs::write(&path, [])?;
+        let trace_id = format!("{}\n", trace_id);
+        std::fs::write(&path, trace_id.as_bytes())?;
     }
 
     Ok(())
