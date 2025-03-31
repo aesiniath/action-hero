@@ -3,13 +3,12 @@ use std::{
     self,
     path::{Path, PathBuf},
 };
+use tracing::{debug, info};
 
 use crate::github::{API, WorkflowRun};
 
-const PREFIX: &str = "record";
-
-pub(crate) fn ensure_record_directory() -> Result<()> {
-    let path = Path::new(PREFIX);
+pub(crate) fn ensure_record_directory(prefix: &str) -> Result<()> {
+    let path = Path::new(prefix);
     if !path.exists() {
         std::fs::create_dir(path)?;
     }
