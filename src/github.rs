@@ -46,7 +46,7 @@ struct ResponseRuns {
 
 pub(crate) async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
-    info!("Get list of Runs for this Workflow");
+    info!("List Runs for Workflow {}", config.workflow);
 
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",

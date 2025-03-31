@@ -15,7 +15,7 @@ mod traces;
 use github::{API, WorkflowJob, WorkflowRun};
 
 async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
-    info!("Processing run {}", run.run_id);
+    info!("Processing Run {}", run.run_id);
 
     let context = traces::establish_root_context(&config, &run);
 
@@ -96,13 +96,14 @@ async fn main() -> Result<()> {
         .unwrap()
         .to_string();
 
-    debug!(repository);
-
     let (owner, repository) = repository
         .split_once('/')
         .expect("Repository must be specified in the form \"owner/repo\"");
     let owner = owner.to_owned();
     let repository = repository.to_owned();
+
+    debug!(owner);
+    debug!(repository);
 
     let workflow = matches
         .get_one::<String>("workflow")
