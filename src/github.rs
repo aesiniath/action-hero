@@ -5,6 +5,7 @@ use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
 use tracing::debug;
+use tracing::info;
 
 use crate::VERSION;
 
@@ -45,6 +46,7 @@ struct ResponseRuns {
 
 pub(crate) async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
+    info!("Get list of Runs for this Workflow");
 
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
@@ -116,6 +118,7 @@ struct ResponseJobs {
 }
 
 pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
+    info!("List Jobs in Run {}", run.run_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         config.owner, config.repository, run.run_id

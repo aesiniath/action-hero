@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
 use time::OffsetDateTime;
-use tracing::debug;
+use tracing::{debug, info};
 use tracing_subscriber;
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -15,6 +15,8 @@ mod traces;
 use github::{API, WorkflowJob, WorkflowRun};
 
 async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
+    info!("Processing run {}", run.run_id);
+
     let context = traces::establish_root_context(&config, &run);
 
     let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, &run).await?;
@@ -122,24 +124,19 @@ async fn main() -> Result<()> {
 
     let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config).await?;
 
-    // temporarily take just the first run in the list
-
     for run in &runs {
         let path = history::form_record_filename(PREFIX, &config, run);
+
+        debug!(run.run_id);
 
         if history::check_is_submitted(&path)? {
             continue;
         }
 
+        process_run(&config, &run).await?;
+
         history::mark_run_submitted(&path)?;
     }
-
-    let run = runs
-        .first()
-        .unwrap();
-    debug!(run.run_id);
-
-    process_run(&config, &run).await?;
 
     // Ensure all spans are exported before the program exits
     provider.shutdown()?;
