@@ -62,12 +62,6 @@ async fn main() -> Result<()> {
                     .hide(true)
                     .action(ArgAction::Version))
             .arg(
-                Arg::new("devel")
-                    .long("devel")
-                    .long_help("Enable development mode")
-                    .global(true)
-                    .action(ArgAction::SetTrue))
-            .arg(
                 Arg::new("repository")
                     .action(ArgAction::Set)
                     .required(true)
@@ -82,9 +76,8 @@ async fn main() -> Result<()> {
     // when developing we reset all the start times to be offset from when
     // this program started running.
 
-    let devel = *matches
-        .get_one::<bool>("devel")
-        .unwrap_or(&false);
+    let devel = std::env::var("HERO_DEVELOPER")?;
+    let devel = !devel.is_empty();
 
     let program_start = OffsetDateTime::now_utc();
 
