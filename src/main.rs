@@ -1,26 +1,31 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
 use time::OffsetDateTime;
-use tracing::debug;
+use tracing::{debug, info};
 use tracing_subscriber;
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
+const PREFIX: &str = "record";
+
 mod github;
+mod history;
 mod traces;
 
 use github::{API, WorkflowJob, WorkflowRun};
 
-async fn process_run(config: &API, run: &WorkflowRun) -> Result<()> {
+async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
+    info!("Processing Run {}", run.run_id);
+
     let context = traces::establish_root_context(&config, &run);
 
     let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, &run).await?;
 
     traces::display_job_steps(&context, &run, jobs);
 
-    traces::finalize_root_span(&context, &run);
+    let trace_id = traces::finalize_root_span(&context, &run);
 
-    Ok(())
+    Ok(trace_id)
 }
 
 #[tokio::main]
@@ -30,6 +35,8 @@ async fn main() -> Result<()> {
 
     // Initialize the opentelemetry exporter
     let provider = traces::setup_telemetry_machinery();
+
+    history::ensure_record_directory(PREFIX)?;
 
     // Configure command-line argument parser
     let matches = Command::new("hero")
@@ -55,11 +62,11 @@ async fn main() -> Result<()> {
                     .hide(true)
                     .action(ArgAction::Version))
             .arg(
-                Arg::new("devel")
-                    .long("devel")
-                    .long_help("Enable development mode")
+                Arg::new("count")
+                    .long("count" )
+                    .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
                     .global(true)
-                    .action(ArgAction::SetTrue))
+                )
             .arg(
                 Arg::new("repository")
                     .action(ArgAction::Set)
@@ -75,9 +82,8 @@ async fn main() -> Result<()> {
     // when developing we reset all the start times to be offset from when
     // this program started running.
 
-    let devel = *matches
-        .get_one::<bool>("devel")
-        .unwrap_or(&false);
+    let devel = std::env::var("HERO_DEVELOPER")?;
+    let devel = !devel.is_empty();
 
     let program_start = OffsetDateTime::now_utc();
 
@@ -89,13 +95,14 @@ async fn main() -> Result<()> {
         .unwrap()
         .to_string();
 
-    debug!(repository);
-
     let (owner, repository) = repository
         .split_once('/')
         .expect("Repository must be specified in the form \"owner/repo\"");
     let owner = owner.to_owned();
     let repository = repository.to_owned();
+
+    debug!(owner);
+    debug!(repository);
 
     let workflow = matches
         .get_one::<String>("workflow")
@@ -115,16 +122,29 @@ async fn main() -> Result<()> {
         program_start,
     };
 
-    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config).await?;
+    let count = matches.get_one::<String>("count");
+    let count = match count {
+        None => 10,
+        Some(value) => value
+            .parse::<u32>()
+            .expect("Unable to parse supplied --count value"),
+    };
 
-    // temporarily take just the first run in the list
+    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, count).await?;
 
-    let run = runs
-        .first()
-        .unwrap();
-    debug!(run.run_id);
+    for run in &runs {
+        let path = history::form_record_filename(PREFIX, &config, run);
 
-    process_run(&config, &run).await?;
+        debug!(run.run_id);
+
+        if history::check_is_submitted(&path)? {
+            continue;
+        }
+
+        let trace_id = process_run(&config, &run).await?;
+
+        history::mark_run_submitted(&path, trace_id)?;
+    }
 
     // Ensure all spans are exported before the program exits
     provider.shutdown()?;

@@ -221,7 +221,7 @@ pub(crate) fn establish_root_context(config: &API, run: &WorkflowRun) -> Context
     context
 }
 
-pub(crate) fn finalize_root_span(context: &Context, run: &WorkflowRun) {
+pub(crate) fn finalize_root_span(context: &Context, run: &WorkflowRun) -> String {
     let span = context.span();
     let span_context = span.span_context();
     let trace_id = span_context.trace_id();
@@ -235,6 +235,8 @@ pub(crate) fn finalize_root_span(context: &Context, run: &WorkflowRun) {
     // this SHOULD be the root span!
     span.set_attribute(KeyValue::new("debug.omega", true));
     span.end_with_timestamp(run_finish);
+
+    format!("{:x}", trace_id)
 }
 
 pub(crate) fn setup_telemetry_machinery() -> SdkTracerProvider {

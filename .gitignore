@@ -1,3 +1,4 @@
 /target
+/record
 /codebook.toml
 /otel-collector-config.yaml

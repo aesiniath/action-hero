@@ -5,6 +5,7 @@ use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
 use tracing::debug;
+use tracing::info;
 
 use crate::VERSION;
 
@@ -43,12 +44,13 @@ struct ResponseRuns {
     workflow_runs: Vec<WorkflowRun>,
 }
 
-pub(crate) async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowRun>> {
+pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
+    info!("List Runs for Workflow {}", config.workflow);
 
     let url = format!(
-        "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page=10&page=1",
-        config.owner, config.repository, config.workflow
+        "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs?per_page={}&page=1",
+        config.owner, config.repository, config.workflow, count
     );
     debug!(?url);
 
@@ -65,10 +67,7 @@ pub(crate) async fn retrieve_workflow_runs(config: &API) -> Result<Vec<WorkflowR
 
     let mut runs: Vec<WorkflowRun> = body.workflow_runs;
 
-    for run in runs
-        .iter_mut()
-        .take(10)
-    {
+    for run in runs.iter_mut() {
         // calculate the change to the origin time if we are in development
         // mode. This delta will be added to all timestamps to bring them to
         // near program start time (ie now).
@@ -116,6 +115,7 @@ struct ResponseJobs {
 }
 
 pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
+    info!("List Jobs in Run {}", run.run_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
         config.owner, config.repository, run.run_id
