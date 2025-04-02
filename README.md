@@ -35,7 +35,7 @@ You pass the name of the repository (qualified with the owner or organization
 it belongs to) and the name of the workflow.
 
 ```
-hero octocat/hello-world check.yaml
+$ hero octocat/hello-world check.yaml
 ```
 
 In this example, the repository is `hello-world` in the `octocat` account, and
@@ -47,6 +47,25 @@ record is made of this having been done on the local filesystem. This allows
 
 By default it will consider the most recent 10 Runs returned by the GitHub API. To process more (or less) Runs pass a number via the `--count` option.
 
+## Sending Telemetry
+
+Traces and spans will be sent by the OpenTelemetry SDK, which defaults to
+writing gRPC to a collector running locally at 127.0.0.1 port 4317 which then
+can be configured to forward on to Honeycomb.
+
+The best way to set this up is to download the _otelcol_ static binary from
+the
+[releases](https://github.com/open-telemetry/opentelemetry-collector/releases)
+page of **open-telemetry/opentelemetry-collector** and once unpacked run with:
+
+```
+$ otelcol --config otel-collector-config.yaml
+```
+
+An example config file can be found in the _doc/_ directory; just enter an
+appropriate Ingest Key for the Honeycomb environment you wish to send to.
+Traces will appear in the `github-builds` service dataset.
+
 ## Development
 
 If you're trying to develop a program like this it's difficult to convert this
@@ -57,5 +76,5 @@ So, to facilitate development, there is an override which forward-dates the
 beginning of the Run to 10 minutes ago, and generates additional randomness into the TraceId so there won't be a collision. This allows you to simply reload the query in Honeycomb and immediately find the trace that was just submitted so you can iterate on the program. Invoke the override as follows:
 
 ```
-RUST_LOG=hero=debug,*=warn HERO_DEVELOPER=true cargo run -- octocat/hello-world check.yaml
+$ RUST_LOG=hero=debug,*=warn HERO_DEVELOPER=true cargo run -- octocat/hello-world check.yaml
 ```
