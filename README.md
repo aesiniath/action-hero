@@ -2,6 +2,7 @@
 
 _When you're doing Actions, the only thing that will save you is a Hero!_
 
+![Two superheros in a datacenter weaving magical spells](doc/ActionHerosInDatacenter.jpg)
 
 ## Background
 
