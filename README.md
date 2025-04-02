@@ -26,6 +26,8 @@ the history of the Jobs that run and the steps in each Job. It composes them
 into spans with appropriate start and finish times, then sends it through your
 local OpenTelemetry Collector up off to Honeycomb.
 
+![Example Trace](doc/TraceExample.png)
+
 ## Usage
 
 You pass the name of the repository (qualified with the owner or organization
