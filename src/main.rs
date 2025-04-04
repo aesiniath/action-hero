@@ -99,9 +99,56 @@ async fn main() -> Result<()> {
 
     let program_start = OffsetDateTime::now_utc();
 
+    let client = github::setup_api_client()?;
+
     match matches.subcommand() {
-        Some(("listen", submatches)) => {}
-        Some(("query", submatches)) => {}
+        Some(("listen", submatches)) => {
+            run_listen().await?;
+        }
+        Some(("query", submatches)) => {
+            // Now we get the details of what repository we're going to get the Action
+            // history from.
+
+            let repository = submatches
+                .get_one::<String>("repository")
+                .unwrap()
+                .to_string();
+
+            let (owner, repository) = repository
+                .split_once('/')
+                .expect("Repository must be specified in the form \"owner/repo\"");
+            let owner = owner.to_owned();
+            let repository = repository.to_owned();
+
+            debug!(owner);
+            debug!(repository);
+
+            let workflow = submatches
+                .get_one::<String>("workflow")
+                .unwrap()
+                .to_string();
+
+            debug!(workflow);
+
+            let config = API {
+                client,
+                owner,
+                repository,
+                workflow,
+                devel,
+                program_start,
+            };
+
+            let count = submatches.get_one::<String>("count");
+            let count = match count {
+                None => 10,
+                Some(value) => value
+                    .parse::<u32>()
+                    .expect("Unable to parse supplied --count value"),
+            };
+
+            run_query(&config, count).await?;
+        }
         Some(_) => {
             println!("No valid subcommand was used")
         }
@@ -111,49 +158,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Now we get the details of what repository we're going to get the Action
-    // history from.
+    // Ensure all spans are exported before the program exits
+    provider.shutdown()?;
 
-    let repository = matches
-        .get_one::<String>("repository")
-        .unwrap()
-        .to_string();
+    Ok(())
+}
 
-    let (owner, repository) = repository
-        .split_once('/')
-        .expect("Repository must be specified in the form \"owner/repo\"");
-    let owner = owner.to_owned();
-    let repository = repository.to_owned();
+async fn run_listen() -> Result<()> {
+    webhook::run_webserver().await
+}
 
-    debug!(owner);
-    debug!(repository);
-
-    let workflow = matches
-        .get_one::<String>("workflow")
-        .unwrap()
-        .to_string();
-
-    debug!(workflow);
-
-    let client = github::setup_api_client()?;
-
-    let config = API {
-        client,
-        owner,
-        repository,
-        workflow,
-        devel,
-        program_start,
-    };
-
-    let count = matches.get_one::<String>("count");
-    let count = match count {
-        None => 10,
-        Some(value) => value
-            .parse::<u32>()
-            .expect("Unable to parse supplied --count value"),
-    };
-
+async fn run_query(config: &API, count: u32) -> Result<()> {
     let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, count).await?;
 
     for run in &runs {
@@ -169,9 +184,6 @@ async fn main() -> Result<()> {
 
         history::mark_run_submitted(&path, trace_id)?;
     }
-
-    // Ensure all spans are exported before the program exits
-    provider.shutdown()?;
 
     Ok(())
 }
