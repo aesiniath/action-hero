@@ -61,22 +61,34 @@ async fn main() -> Result<()> {
                     .global(true)
                     .hide(true)
                     .action(ArgAction::Version))
-            .arg(
-                Arg::new("count")
-                    .long("count" )
-                    .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
-                    .global(true)
-                )
-            .arg(
-                Arg::new("repository")
-                    .action(ArgAction::Set)
-                    .required(true)
-                    .help("Name of the GitHub organization and repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
-            .arg(
-                Arg::new("workflow")
-                    .action(ArgAction::Set)
-                    .required(true)
-                    .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
+            .subcommand(
+                Command::new("listen")
+                        .about("Run HTTP server to receive webhook events from GitHub")
+                                .arg(Arg::new("port")
+                                    .long("port")
+                                    .long_help("Override the port the receiver will listen on. The default is port 34484")
+                                )
+            )
+            .subcommand(
+                Command::new("query")
+                        .about("Query workflow runs directly")
+                        .arg(
+                            Arg::new("count")
+                                .long("count" )
+                                .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
+                            )
+                        .arg(
+                                Arg::new("repository")
+                                    .action(ArgAction::Set)
+                                    .required(true)
+                                    .help("Name of the GitHub organization and repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
+                            .arg(
+                                Arg::new("workflow")
+                                    .action(ArgAction::Set)
+                                    .required(true)
+                                    .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
+
+            )
             .get_matches();
 
     // when developing we reset all the start times to be offset from when
@@ -86,6 +98,18 @@ async fn main() -> Result<()> {
     let devel = !devel.is_empty();
 
     let program_start = OffsetDateTime::now_utc();
+
+    match matches.subcommand() {
+        Some(("listen", submatches)) => {}
+        Some(("query", submatches)) => {}
+        Some(_) => {
+            println!("No valid subcommand was used")
+        }
+        None => {
+            println!("usage: hero [COMMAND] ...");
+            println!("Try '--help' for more information.");
+        }
+    }
 
     // Now we get the details of what repository we're going to get the Action
     // history from.
