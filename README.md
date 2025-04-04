@@ -45,7 +45,8 @@ After a Run's Jobs are recieved, transformed into telemetry, and sent, a
 record is made of this having been done on the local filesystem. This allows
 **action-hero** to be re-run and only new Runs will be sent.
 
-By default it will consider the most recent 10 Runs returned by the GitHub API. To process more (or less) Runs pass a number via the `--count` option.
+By default it will consider the most recent 10 Runs returned by the GitHub
+API. To process more (or less) Runs pass a number via the `--count` option.
 
 ## Sending Telemetry
 
@@ -68,12 +69,17 @@ Traces will appear in the `github-builds` service dataset.
 
 ## Development
 
-If you're trying to develop a program like this it's difficult to convert this
-into accurate telemetry because once you've processed a given Run into a Trace
-at a given TraceId you can't send it again. Even if TraceIds weren't deterministic you'd end up with multiple traces in your dataset all at exactly the same point some arbitrary amount of time in the past.
+It's difficult to develop a program like this because once you've processed a
+given Run into a Trace at a given TraceId you can't send it again. Even if
+TraceIds weren't deterministic you'd end up with multiple traces in your
+dataset all at exactly the same point in time corresponding to whenever the
+GitHub Action ran.
 
 So, to facilitate development, there is an override which forward-dates the
-beginning of the Run to 10 minutes ago, and generates additional randomness into the TraceId so there won't be a collision. This allows you to simply reload the query in Honeycomb and immediately find the trace that was just submitted so you can iterate on the program. Invoke the override as follows:
+beginning time of a Run to 10 minutes ago, and adds some randomness into the
+TraceId so there won't be a collision. This allows you to simply reload the
+query in Honeycomb and immediately find the trace that was just submitted so
+you can iterate on the program. Invoke the override as follows:
 
 ```
 $ RUST_LOG=hero=debug,*=warn HERO_DEVELOPER=true cargo run -- octocat/hello-world check.yaml
