@@ -11,6 +11,7 @@ const PREFIX: &str = "record";
 mod github;
 mod history;
 mod traces;
+mod webhook;
 
 use github::{API, WorkflowJob, WorkflowRun};
 
