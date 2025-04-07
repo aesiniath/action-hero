@@ -15,20 +15,6 @@ mod webhook;
 
 use github::{API, WorkflowJob, WorkflowRun};
 
-async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
-    info!("Processing Run {}", run.run_id);
-
-    let context = traces::establish_root_context(&config, &run);
-
-    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, &run).await?;
-
-    traces::display_job_steps(&context, &run, jobs);
-
-    let trace_id = traces::finalize_root_span(&context, &run);
-
-    Ok(trace_id)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize the logging subsystem
@@ -104,7 +90,28 @@ async fn main() -> Result<()> {
 
     match matches.subcommand() {
         Some(("listen", submatches)) => {
-            run_listen().await?;
+            let port = submatches.get_one::<String>("port");
+            let port = match port {
+                None => 34484,
+                Some(value) => value
+                    .parse::<u32>()
+                    .expect("Unable to parse supplied --port value"),
+            };
+
+            let owner = String::new();
+            let repository = String::new();
+            let workflow = String::new();
+
+            let config = API {
+                client,
+                owner,
+                repository,
+                workflow,
+                devel,
+                program_start,
+            };
+
+            run_listen(&config, port).await?;
         }
         Some(("query", submatches)) => {
             // Now we get the details of what repository we're going to get the Action
@@ -165,8 +172,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen() -> Result<()> {
-    webhook::run_webserver().await
+async fn run_listen(config: &API, port: u32) -> Result<()> {
+    webhook::run_webserver(port).await
 }
 
 async fn run_query(config: &API, count: u32) -> Result<()> {
@@ -187,4 +194,18 @@ async fn run_query(config: &API, count: u32) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
+    info!("Processing Run {}", run.run_id);
+
+    let context = traces::establish_root_context(&config, &run);
+
+    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, &run).await?;
+
+    traces::display_job_steps(&context, &run, jobs);
+
+    let trace_id = traces::finalize_root_span(&context, &run);
+
+    Ok(trace_id)
 }

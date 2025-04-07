@@ -10,10 +10,11 @@ use tracing::info;
 
 use crate::VERSION;
 
-pub(crate) async fn run_webserver() -> Result<()> {
+pub(crate) async fn run_webserver(port: u32) -> Result<()> {
     let router = Router::new().route("/", get(hello_world));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:34484").await?;
+    let address = format!("127.0.0.1:{}", port);
+    let listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(listener, router).await?;
 
     Ok(())
