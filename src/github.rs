@@ -12,7 +12,6 @@ use crate::VERSION;
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
 pub(crate) struct API {
-    pub(crate) client: reqwest::Client,
     pub(crate) owner: String,
     pub(crate) repository: String,
     pub(crate) workflow: String,
@@ -44,7 +43,11 @@ struct ResponseRuns {
     workflow_runs: Vec<WorkflowRun>,
 }
 
-pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<Vec<WorkflowRun>> {
+pub(crate) async fn retrieve_workflow_runs(
+    config: &API,
+    client: &reqwest::Client,
+    count: u32,
+) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
     info!("List Runs for Workflow {}", config.workflow);
 
@@ -54,8 +57,7 @@ pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<V
     );
     debug!(?url);
 
-    let response = config
-        .client
+    let response = client
         .get(&url)
         .send()
         .await?;
@@ -114,7 +116,11 @@ struct ResponseJobs {
     jobs: Vec<WorkflowJob>,
 }
 
-pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
+pub(crate) async fn retrieve_run_jobs(
+    config: &API,
+    client: &reqwest::Client,
+    run: &WorkflowRun,
+) -> Result<Vec<WorkflowJob>> {
     info!("List Jobs in Run {}", run.run_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
@@ -123,8 +129,7 @@ pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result
 
     debug!(?url);
 
-    let response = config
-        .client
+    let response = client
         .get(url)
         .send()
         .await?;

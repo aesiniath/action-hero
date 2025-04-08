@@ -86,8 +86,6 @@ async fn main() -> Result<()> {
 
     let program_start = OffsetDateTime::now_utc();
 
-    let client = github::setup_api_client()?;
-
     match matches.subcommand() {
         Some(("listen", submatches)) => {
             let port = submatches.get_one::<String>("port");
@@ -103,7 +101,6 @@ async fn main() -> Result<()> {
             let workflow = String::new();
 
             let config = API {
-                client,
                 owner,
                 repository,
                 workflow,
@@ -139,7 +136,6 @@ async fn main() -> Result<()> {
             debug!(workflow);
 
             let config = API {
-                client,
                 owner,
                 repository,
                 workflow,
@@ -177,7 +173,9 @@ async fn run_listen(config: &API, port: u32) -> Result<()> {
 }
 
 async fn run_query(config: &API, count: u32) -> Result<()> {
-    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, count).await?;
+    let client = github::setup_api_client()?;
+
+    let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, &client, count).await?;
 
     for run in &runs {
         let path = history::form_record_filename(PREFIX, &config, run);
@@ -188,7 +186,7 @@ async fn run_query(config: &API, count: u32) -> Result<()> {
             continue;
         }
 
-        let trace_id = process_run(&config, &run).await?;
+        let trace_id = process_run(&config, &client, &run).await?;
 
         history::mark_run_submitted(&path, trace_id)?;
     }
@@ -196,12 +194,12 @@ async fn run_query(config: &API, count: u32) -> Result<()> {
     Ok(())
 }
 
-async fn process_run(config: &API, run: &WorkflowRun) -> Result<String> {
+async fn process_run(config: &API, client: &reqwest::Client, run: &WorkflowRun) -> Result<String> {
     info!("Processing Run {}", run.run_id);
 
     let context = traces::establish_root_context(&config, &run);
 
-    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, &run).await?;
+    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, client, &run).await?;
 
     traces::display_job_steps(&context, &run, jobs);
 
