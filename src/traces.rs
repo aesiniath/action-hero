@@ -14,7 +14,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use crate::VERSION;
-use crate::github::{API, WorkflowJob, WorkflowRun};
+use crate::github::{Config, WorkflowJob, WorkflowRun};
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
 /// represent start and end times (which makes sense, given that is mostly
@@ -27,7 +27,7 @@ fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
         .into()
 }
 
-fn form_trace_id(config: &API, run_id: u64) -> TraceId {
+fn form_trace_id(config: &Config, run_id: u64) -> TraceId {
     let input = format!(
         "{}:{}:{}:{}",
         config.owner, config.repository, config.workflow, run_id
@@ -142,7 +142,7 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
     }
 }
 
-pub(crate) fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
+pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Context {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 

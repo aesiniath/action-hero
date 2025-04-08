@@ -13,7 +13,7 @@ mod history;
 mod traces;
 mod webhook;
 
-use github::{API, WorkflowJob, WorkflowRun};
+use github::{Config, WorkflowJob, WorkflowRun};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
             let repository = String::new();
             let workflow = String::new();
 
-            let config = API {
+            let config = Config {
                 owner,
                 repository,
                 workflow,
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
 
             debug!(workflow);
 
-            let config = API {
+            let config = Config {
                 owner,
                 repository,
                 workflow,
@@ -168,11 +168,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(config: &API, port: u32) -> Result<()> {
+async fn run_listen(config: &Config, port: u32) -> Result<()> {
     webhook::run_webserver(port).await
 }
 
-async fn run_query(config: &API, count: u32) -> Result<()> {
+async fn run_query(config: &Config, count: u32) -> Result<()> {
     let client = github::setup_api_client()?;
 
     let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, &client, count).await?;
@@ -194,7 +194,7 @@ async fn run_query(config: &API, count: u32) -> Result<()> {
     Ok(())
 }
 
-async fn process_run(config: &API, client: &reqwest::Client, run: &WorkflowRun) -> Result<String> {
+async fn process_run(config: &Config, client: &reqwest::Client, run: &WorkflowRun) -> Result<String> {
     info!("Processing Run {}", run.run_id);
 
     let context = traces::establish_root_context(&config, &run);

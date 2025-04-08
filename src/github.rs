@@ -11,7 +11,7 @@ use crate::VERSION;
 
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
-pub(crate) struct API {
+pub(crate) struct Config {
     pub(crate) owner: String,
     pub(crate) repository: String,
     pub(crate) workflow: String,
@@ -44,7 +44,7 @@ struct ResponseRuns {
 }
 
 pub(crate) async fn retrieve_workflow_runs(
-    config: &API,
+    config: &Config,
     client: &reqwest::Client,
     count: u32,
 ) -> Result<Vec<WorkflowRun>> {
@@ -117,7 +117,7 @@ struct ResponseJobs {
 }
 
 pub(crate) async fn retrieve_run_jobs(
-    config: &API,
+    config: &Config,
     client: &reqwest::Client,
     run: &WorkflowRun,
 ) -> Result<Vec<WorkflowJob>> {
