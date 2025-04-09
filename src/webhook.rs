@@ -5,10 +5,7 @@ use anyhow::Result;
 use axum::Json;
 use axum::{Router, routing::get};
 use serde::Deserialize;
-use tracing::debug;
 use tracing::info;
-
-use crate::VERSION;
 
 pub(crate) async fn run_webserver(port: u32) -> Result<()> {
     let router = Router::new().route("/", get(hello_world).post(receive_post));

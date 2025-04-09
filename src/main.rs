@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(config: &Config, port: u32) -> Result<()> {
+async fn run_listen(_config: &Config, port: u32) -> Result<()> {
     webhook::run_webserver(port).await
 }
 
