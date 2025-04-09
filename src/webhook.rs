@@ -26,5 +26,5 @@ async fn hello_world() -> &'static str {
 }
 
 async fn receive_post(Json(value): Json<serde_json::Value>) {
-    debug!(?value)
+    println!("{}", serde_json::to_string_pretty(&value).unwrap())
 }
