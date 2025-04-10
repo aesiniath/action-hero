@@ -1,5 +1,6 @@
 use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
+use std::sync::OnceLock;
 use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber;
@@ -7,6 +8,18 @@ use tracing_subscriber;
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 const PREFIX: &str = "record";
+
+static PROGRAM_START: OnceLock<OffsetDateTime> = OnceLock::new();
+
+fn set_program_start() {
+    PROGRAM_START
+        .set(OffsetDateTime::now_utc())
+        .unwrap();
+}
+
+fn get_program_start() -> &'static OffsetDateTime {
+    PROGRAM_START.wait()
+}
 
 mod github;
 mod history;
@@ -17,6 +30,9 @@ use github::{Config, WorkflowJob, WorkflowRun};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Record start time
+    set_program_start();
+
     // Initialize the logging subsystem
     tracing_subscriber::fmt::init();
 
@@ -84,8 +100,6 @@ async fn main() -> Result<()> {
     let devel = std::env::var("HERO_DEVELOPER")?;
     let devel = !devel.is_empty();
 
-    let program_start = OffsetDateTime::now_utc();
-
     match matches.subcommand() {
         Some(("listen", submatches)) => {
             let port = submatches.get_one::<String>("port");
@@ -105,7 +119,6 @@ async fn main() -> Result<()> {
                 repository,
                 workflow,
                 devel,
-                program_start,
             };
 
             run_listen(&config, port).await?;
@@ -140,7 +153,6 @@ async fn main() -> Result<()> {
                 repository,
                 workflow,
                 devel,
-                program_start,
             };
 
             let count = submatches.get_one::<String>("count");

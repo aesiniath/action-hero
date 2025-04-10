@@ -8,6 +8,7 @@ use tracing::debug;
 use tracing::info;
 
 use crate::VERSION;
+use crate::get_program_start;
 
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
@@ -16,7 +17,6 @@ pub(crate) struct Config {
     pub(crate) repository: String,
     pub(crate) workflow: String,
     pub(crate) devel: bool,
-    pub(crate) program_start: OffsetDateTime,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +74,8 @@ pub(crate) async fn retrieve_workflow_runs(
         // mode. This delta will be added to all timestamps to bring them to
         // near program start time (ie now).
         let delta = if config.devel {
-            config.program_start - run.created_at - Duration::minutes(10)
+            let program_start = *get_program_start();
+            program_start - run.created_at - Duration::minutes(10)
         } else {
             Duration::ZERO
         };
