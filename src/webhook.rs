@@ -7,6 +7,8 @@ use axum::{Router, routing::get};
 use serde::Deserialize;
 use tracing::info;
 
+use crate::github::{self, Config};
+
 pub(crate) async fn run_webserver(port: u32) -> Result<()> {
     let router = Router::new().route("/", get(hello_world).post(receive_post));
 
@@ -24,7 +26,7 @@ struct RequestPayload {
     action: String,
     organization: WebhookOrganization,
     repository: WebhookRepository,
-    workflow_run: WebhookWorkflowRun,
+    workflow_run: github::WorkflowRun,
 }
 
 #[derive(Deserialize)]
@@ -37,21 +39,6 @@ struct WebhookRepository {
     name: String,
 }
 
-#[derive(Deserialize)]
-struct WebhookWorkflowRun {
-    actor: WebhookActor,
-    conclusion: String,
-    display_title: String,
-    event: String,
-    head_branch: String,
-    path: String,
-}
-
-#[derive(Deserialize)]
-struct WebhookActor {
-    login: String,
-}
-
 async fn hello_world() -> &'static str {
     "Hello world!"
 }
@@ -59,11 +46,16 @@ async fn hello_world() -> &'static str {
 async fn receive_post(Json(payload): Json<RequestPayload>) {
     let path = payload
         .workflow_run
-        .path;
+        .path
+        .clone();
     let filename = path
         .split('/')
         .last()
-        .unwrap();
+        .unwrap()
+        .to_string();
+
+    // This served as a useful diagnostic to ensure we had the right fields
+    // from the inbound request's JSON object body.
 
     println!(
         "{}: {}/{} {} \"{}\" by {} via {} for {}: {}",
@@ -92,4 +84,23 @@ async fn receive_post(Json(payload): Json<RequestPayload>) {
             .workflow_run
             .conclusion
     );
+
+    // Now use those fields to form the Config object that will be used to
+    // drive processing the run.
+
+    let config = Config {
+        owner: payload
+            .organization
+            .login,
+        repository: payload
+            .repository
+            .name,
+        workflow: filename,
+        devel: false,
+    };
+
+    let client = github::setup_api_client().unwrap();
+
+    let _ = crate::process_run(&config, &client, &payload.workflow_run).await;
+    // Ok(())
 }

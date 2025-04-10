@@ -19,13 +19,22 @@ pub(crate) struct Config {
     pub(crate) devel: bool,
 }
 
+// We have structs for all the relevant objects in the GitHub API. This was
+// initially created by the responses for the various GitHub Actions Workflow
+// Run responses, but it turns out the payload for the webhook is the same
+// object, so we were able to re-use this.
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkflowRun {
+    pub(crate) actor: WorkflowActor,
     #[serde(rename = "id")]
     pub(crate) run_id: u64,
     pub(crate) run_number: u64,
     pub(crate) run_attempt: u64,
+    pub(crate) head_branch: String,
     pub(crate) name: String,
+    pub(crate) display_title: String,
+    pub(crate) event: String, // what caused the workflow to run
     pub(crate) status: String,
     pub(crate) conclusion: String,
     #[serde(with = "rfc3339")]
@@ -33,9 +42,15 @@ pub(crate) struct WorkflowRun {
     #[serde(with = "rfc3339")]
     pub(crate) updated_at: OffsetDateTime,
     pub(crate) html_url: String,
+    pub(crate) path: String, // the full path and version of the workflow code
+
     // and now our fields that are NOT in the response object
     #[serde(default)]
     pub(crate) delta: Duration,
+}
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowActor {
+    pub(crate) login: String,
 }
 
 #[derive(Deserialize)]

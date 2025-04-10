@@ -206,7 +206,11 @@ async fn run_query(config: &Config, count: u32) -> Result<()> {
     Ok(())
 }
 
-async fn process_run(config: &Config, client: &reqwest::Client, run: &WorkflowRun) -> Result<String> {
+async fn process_run(
+    config: &Config,
+    client: &reqwest::Client,
+    run: &WorkflowRun,
+) -> Result<String> {
     info!("Processing Run {}", run.run_id);
 
     let context = traces::establish_root_context(&config, &run);
