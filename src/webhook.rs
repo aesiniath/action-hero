@@ -1,15 +1,16 @@
 //! This is a module to receive webhooks from GitHub when a GitHub Action
 //! workflow is run.
 
-use anyhow::Result;
 use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::{Router, routing::get};
 use serde::Deserialize;
 use tracing::info;
 
 use crate::github::{self, Config};
 
-pub(crate) async fn run_webserver(port: u32) -> Result<()> {
+pub(crate) async fn run_webserver(port: u32) -> anyhow::Result<()> {
     let router = Router::new().route("/", get(hello_world).post(receive_post));
 
     let address = format!("127.0.0.1:{}", port);
@@ -43,7 +44,26 @@ async fn hello_world() -> &'static str {
     "Hello world!"
 }
 
-async fn receive_post(Json(payload): Json<RequestPayload>) {
+// Make a wrapper around `anyhow::Error`.
+struct ErrorWrapper(anyhow::Error);
+
+// Tell axum how to convert that wrapper into a response.
+impl IntoResponse for ErrorWrapper {
+    fn into_response(self) -> Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self.0)).into_response()
+    }
+}
+
+impl From<anyhow::Error> for ErrorWrapper {
+    fn from(error: anyhow::Error) -> Self {
+        ErrorWrapper(error)
+    }
+}
+
+/// Handler for incoming webhook requests. This will extract the supplied
+/// WorkflowRun, fire off the query to get its jobs and steps, then process
+/// that into telemetry.
+async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWrapper> {
     let path = payload
         .workflow_run
         .path
@@ -99,8 +119,14 @@ async fn receive_post(Json(payload): Json<RequestPayload>) {
         devel: false,
     };
 
-    let client = github::setup_api_client().unwrap();
+    let client = github::setup_api_client()?;
 
-    let _ = crate::process_run(&config, &client, &payload.workflow_run).await;
-    // Ok(())
+    let result = crate::process_run(&config, &client, &payload.workflow_run).await;
+
+    // if there was a problem wrap it in the adaptor type so we get something
+    // that converts via IntoResponse.
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => Err(ErrorWrapper(err)),
+    }
 }
