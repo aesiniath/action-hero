@@ -6,6 +6,7 @@ use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
+use std::borrow::Cow;
 use std::process;
 // use opentelemetry_stdout::SpanExporter;
 use sha2::Digest;
@@ -131,6 +132,13 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
             // will create the new Span as a child of that one as parent!
             let mut span = tracer.build_with_context(builder, &context);
             span.set_attribute(KeyValue::new("status", step.status));
+
+            if step.conclusion == "failure" {
+                span.set_status(opentelemetry::trace::Status::Error {
+                    description: Cow::Borrowed("Step failed"),
+                });
+            }
+            span.set_attribute(KeyValue::new("conclusion", step.conclusion));
 
             span.end_with_timestamp(step_finish);
         }
