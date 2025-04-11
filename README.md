@@ -65,7 +65,7 @@ $ otelcol --config otel-collector-config.yaml
 
 An example config file can be found in the _doc/_ directory; just enter an
 appropriate Ingest Key for the Honeycomb environment you wish to send to.
-Traces will appear in the `github-builds` service dataset.
+Traces will appear in the `github-actions` service dataset.
 
 ## Development
 

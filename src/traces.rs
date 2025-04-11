@@ -245,7 +245,7 @@ pub(crate) fn setup_telemetry_machinery() -> SdkTracerProvider {
 
     let resource = Resource::builder()
         .with_attributes([
-            KeyValue::new(SERVICE_NAME, "github-builds"),
+            KeyValue::new(SERVICE_NAME, "github-actions"),
             KeyValue::new(SERVICE_VERSION, VERSION),
         ])
         .build();
