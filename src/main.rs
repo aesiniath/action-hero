@@ -97,8 +97,7 @@ async fn main() -> Result<()> {
     // when developing we reset all the start times to be offset from when
     // this program started running.
 
-    let devel = std::env::var("HERO_DEVELOPER")?;
-    let devel = !devel.is_empty();
+    let devel = std::env::var("HERO_DEVELOPER").is_ok();
 
     match matches.subcommand() {
         Some(("listen", submatches)) => {
