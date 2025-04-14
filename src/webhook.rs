@@ -44,19 +44,31 @@ async fn hello_world() -> &'static str {
     "Hello world!"
 }
 
-// Make a wrapper around `anyhow::Error`.
-struct ErrorWrapper(anyhow::Error);
+// Make a wrapper around `anyhow::Error` and other branching escape paths we
+// want to convert into specific response codes.
+enum ErrorWrapper {
+    AnyhowError(anyhow::Error),
+    IgnoredAction(String)
+}
 
 // Tell axum how to convert that wrapper into a response.
 impl IntoResponse for ErrorWrapper {
     fn into_response(self) -> Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self.0)).into_response()
+        match self {
+            ErrorWrapper::AnyhowError(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", error)).into_response()
+            }
+            ErrorWrapper::IgnoredAction(what) => {
+                (StatusCode::NON_AUTHORITATIVE_INFORMATION, format!("Ignoring '{}' action", what)).into_response() // such a stupid field name
+            }
+        }
+        
     }
 }
 
 impl From<anyhow::Error> for ErrorWrapper {
     fn from(error: anyhow::Error) -> Self {
-        ErrorWrapper(error)
+        ErrorWrapper::AnyhowError(error)
     }
 }
 
@@ -107,6 +119,12 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
             .unwrap_or("null".to_string())
     );
 
+    // make a decision about whether this is a request we can handle
+    
+    if payload.action != "completed" {
+        return Err(ErrorWrapper::IgnoredAction(payload.action));
+    }
+    
     // Now use those fields to form the Config object that will be used to
     // drive processing the run.
 
@@ -129,6 +147,6 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
     // that converts via IntoResponse.
     match result {
         Ok(_) => Ok(()),
-        Err(err) => Err(ErrorWrapper(err)),
+        Err(err) => Err(ErrorWrapper::AnyhowError(err)),
     }
 }
