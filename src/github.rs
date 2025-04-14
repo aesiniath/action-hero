@@ -8,25 +8,33 @@ use tracing::debug;
 use tracing::info;
 
 use crate::VERSION;
+use crate::get_program_start;
 
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
-pub(crate) struct API {
-    pub(crate) client: reqwest::Client,
+pub(crate) struct Config {
     pub(crate) owner: String,
     pub(crate) repository: String,
     pub(crate) workflow: String,
     pub(crate) devel: bool,
-    pub(crate) program_start: OffsetDateTime,
 }
+
+// We have structs for all the relevant objects in the GitHub API. This was
+// initially created by the responses for the various GitHub Actions Workflow
+// Run responses, but it turns out the payload for the webhook is the same
+// object, so we were able to re-use this.
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkflowRun {
+    pub(crate) actor: WorkflowActor,
     #[serde(rename = "id")]
     pub(crate) run_id: u64,
     pub(crate) run_number: u64,
     pub(crate) run_attempt: u64,
+    pub(crate) head_branch: String,
     pub(crate) name: String,
+    pub(crate) display_title: String,
+    pub(crate) event: String, // what caused the workflow to run
     pub(crate) status: String,
     pub(crate) conclusion: String,
     #[serde(with = "rfc3339")]
@@ -34,9 +42,15 @@ pub(crate) struct WorkflowRun {
     #[serde(with = "rfc3339")]
     pub(crate) updated_at: OffsetDateTime,
     pub(crate) html_url: String,
+    pub(crate) path: String, // the full path and version of the workflow code
+
     // and now our fields that are NOT in the response object
     #[serde(default)]
     pub(crate) delta: Duration,
+}
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowActor {
+    pub(crate) login: String,
 }
 
 #[derive(Deserialize)]
@@ -44,7 +58,11 @@ struct ResponseRuns {
     workflow_runs: Vec<WorkflowRun>,
 }
 
-pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<Vec<WorkflowRun>> {
+pub(crate) async fn retrieve_workflow_runs(
+    config: &Config,
+    client: &reqwest::Client,
+    count: u32,
+) -> Result<Vec<WorkflowRun>> {
     // use token to retrieve runs for the given workflow from GitHub API
     info!("List Runs for Workflow {}", config.workflow);
 
@@ -54,8 +72,7 @@ pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<V
     );
     debug!(?url);
 
-    let response = config
-        .client
+    let response = client
         .get(&url)
         .send()
         .await?;
@@ -72,7 +89,8 @@ pub(crate) async fn retrieve_workflow_runs(config: &API, count: u32) -> Result<V
         // mode. This delta will be added to all timestamps to bring them to
         // near program start time (ie now).
         let delta = if config.devel {
-            config.program_start - run.created_at - Duration::minutes(10)
+            let program_start = *get_program_start();
+            program_start - run.created_at - Duration::minutes(10)
         } else {
             Duration::ZERO
         };
@@ -114,7 +132,11 @@ struct ResponseJobs {
     jobs: Vec<WorkflowJob>,
 }
 
-pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result<Vec<WorkflowJob>> {
+pub(crate) async fn retrieve_run_jobs(
+    config: &Config,
+    client: &reqwest::Client,
+    run: &WorkflowRun,
+) -> Result<Vec<WorkflowJob>> {
     info!("List Jobs in Run {}", run.run_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
@@ -123,8 +145,7 @@ pub(crate) async fn retrieve_run_jobs(config: &API, run: &WorkflowRun) -> Result
 
     debug!(?url);
 
-    let response = config
-        .client
+    let response = client
         .get(url)
         .send()
         .await?;

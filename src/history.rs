@@ -5,7 +5,7 @@ use std::{
 };
 use tracing::{debug, info};
 
-use crate::github::{API, WorkflowRun};
+use crate::github::{Config, WorkflowRun};
 
 pub(crate) fn ensure_record_directory(prefix: &str) -> Result<()> {
     let path = Path::new(prefix);
@@ -15,7 +15,7 @@ pub(crate) fn ensure_record_directory(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn form_record_filename(prefix: &str, config: &API, run: &WorkflowRun) -> PathBuf {
+pub(crate) fn form_record_filename(prefix: &str, config: &Config, run: &WorkflowRun) -> PathBuf {
     let id = format!("{}", run.run_id);
 
     let name = format!(

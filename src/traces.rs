@@ -6,6 +6,7 @@ use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
+use std::borrow::Cow;
 use std::process;
 // use opentelemetry_stdout::SpanExporter;
 use sha2::Digest;
@@ -14,7 +15,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use crate::VERSION;
-use crate::github::{API, WorkflowJob, WorkflowRun};
+use crate::github::{Config, WorkflowJob, WorkflowRun};
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
 /// represent start and end times (which makes sense, given that is mostly
@@ -27,7 +28,7 @@ fn convert_to_system_time(datetime: &OffsetDateTime) -> SystemTime {
         .into()
 }
 
-fn form_trace_id(config: &API, run_id: u64) -> TraceId {
+fn form_trace_id(config: &Config, run_id: u64) -> TraceId {
     let input = format!(
         "{}:{}:{}:{}",
         config.owner, config.repository, config.workflow, run_id
@@ -132,6 +133,13 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
             let mut span = tracer.build_with_context(builder, &context);
             span.set_attribute(KeyValue::new("status", step.status));
 
+            if step.conclusion == "failure" {
+                span.set_status(opentelemetry::trace::Status::Error {
+                    description: Cow::Borrowed("Step failed"),
+                });
+            }
+            span.set_attribute(KeyValue::new("conclusion", step.conclusion));
+
             span.end_with_timestamp(step_finish);
         }
 
@@ -142,7 +150,7 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
     }
 }
 
-pub(crate) fn establish_root_context(config: &API, run: &WorkflowRun) -> Context {
+pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Context {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
@@ -245,7 +253,7 @@ pub(crate) fn setup_telemetry_machinery() -> SdkTracerProvider {
 
     let resource = Resource::builder()
         .with_attributes([
-            KeyValue::new(SERVICE_NAME, "github-builds"),
+            KeyValue::new(SERVICE_NAME, "github-actions"),
             KeyValue::new(SERVICE_VERSION, VERSION),
         ])
         .build();
