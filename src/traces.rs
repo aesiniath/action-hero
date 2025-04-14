@@ -212,8 +212,9 @@ pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Cont
 
     span.set_attribute(KeyValue::new("run_id", run.run_id as i64));
 
-    span.set_attribute(KeyValue::new("conclusion", conclusion));
-
+    if let Some(value) = conclusion {
+        span.set_attribute(KeyValue::new("conclusion", value));
+    }
     span.set_attribute(KeyValue::new("status", status));
 
     span.set_attribute(KeyValue::new("html_url", html_url));

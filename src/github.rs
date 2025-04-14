@@ -36,7 +36,7 @@ pub(crate) struct WorkflowRun {
     pub(crate) display_title: String,
     pub(crate) event: String, // what caused the workflow to run
     pub(crate) status: String,
-    pub(crate) conclusion: String,
+    pub(crate) conclusion: Option<String>,
     #[serde(with = "rfc3339")]
     pub(crate) created_at: OffsetDateTime,
     #[serde(with = "rfc3339")]

@@ -103,6 +103,8 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
         payload
             .workflow_run
             .conclusion
+            .clone()
+            .unwrap_or("null".to_string())
     );
 
     // Now use those fields to form the Config object that will be used to
@@ -123,7 +125,7 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
 
     let result = crate::process_run(&config, &client, &payload.workflow_run).await;
 
-    // if there was a problem wrap it in the adaptor type so we get something
+    // if there was a problem wrap it in the adapter type so we get something
     // that converts via IntoResponse.
     match result {
         Ok(_) => Ok(()),
