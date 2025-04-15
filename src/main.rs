@@ -21,6 +21,22 @@ fn get_program_start() -> &'static OffsetDateTime {
     PROGRAM_START.wait()
 }
 
+static GITHUB_TOKEN: OnceLock<String> = OnceLock::new();
+
+// get GITHUB_TOKEN value from environment variable. We go to the trouble of
+// having this in a global variable so we can ensure to check for it at
+// program start.
+fn set_api_token() {
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    GITHUB_TOKEN
+        .set(token)
+        .unwrap()
+}
+
+fn get_api_token() -> &'static String {
+    GITHUB_TOKEN.wait()
+}
+
 mod github;
 mod history;
 mod traces;
@@ -99,6 +115,9 @@ async fn main() -> Result<()> {
 
     let devel = std::env::var("HERO_DEVELOPER").is_ok();
 
+    // ensure GitHub API token available from environment
+    set_api_token();
+
     match matches.subcommand() {
         Some(("listen", submatches)) => {
             let port = submatches.get_one::<String>("port");
@@ -109,18 +128,7 @@ async fn main() -> Result<()> {
                     .expect("Unable to parse supplied --port value"),
             };
 
-            let owner = String::new();
-            let repository = String::new();
-            let workflow = String::new();
-
-            let config = Config {
-                owner,
-                repository,
-                workflow,
-                devel,
-            };
-
-            run_listen(&config, port).await?;
+            run_listen(port).await?;
         }
         Some(("query", submatches)) => {
             // Now we get the details of what repository we're going to get the Action
@@ -179,7 +187,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(_config: &Config, port: u32) -> Result<()> {
+async fn run_listen(port: u32) -> Result<()> {
     webhook::run_webserver(port).await
 }
 

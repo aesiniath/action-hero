@@ -2,7 +2,9 @@
 //! workflow is run.
 
 use axum::Json;
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::FromRequest;
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing::get};
 use serde::Deserialize;
@@ -44,26 +46,89 @@ async fn hello_world() -> &'static str {
     "Hello world!"
 }
 
-// Make a wrapper around `anyhow::Error`.
-struct ErrorWrapper(anyhow::Error);
+// Make a wrapper around `anyhow::Error` and other branching escape paths we
+// want to convert into specific response codes.
+enum ErrorWrapper {
+    AnyhowError(anyhow::Error),
+    MissingHeader,
+    IgnoredType(String),
+    IgnoredAction(String),
+    JsonFailure(axum::extract::rejection::JsonRejection),
+}
 
 // Tell axum how to convert that wrapper into a response.
 impl IntoResponse for ErrorWrapper {
     fn into_response(self) -> Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self.0)).into_response()
+        match self {
+            ErrorWrapper::AnyhowError(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", error)).into_response()
+            }
+            ErrorWrapper::MissingHeader => {
+                (StatusCode::BAD_REQUEST, "Missing X-GitHub-Event header").into_response()
+            }
+            ErrorWrapper::IgnoredType(what) => {
+                (
+                    StatusCode::NON_AUTHORITATIVE_INFORMATION,
+                    format!("Ignoring '{}' event", what),
+                )
+                    .into_response() // such a stupid field name
+            }
+            ErrorWrapper::IgnoredAction(what) => {
+                (
+                    StatusCode::NON_AUTHORITATIVE_INFORMATION,
+                    format!("Ignoring '{}' action", what),
+                )
+                    .into_response() // such a stupid field name
+            }
+            ErrorWrapper::JsonFailure(problem) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, problem).into_response()
+            }
+        }
     }
 }
 
 impl From<anyhow::Error> for ErrorWrapper {
     fn from(error: anyhow::Error) -> Self {
-        ErrorWrapper(error)
+        ErrorWrapper::AnyhowError(error)
+    }
+}
+
+struct GitHubEvent(Json<RequestPayload>);
+
+impl<S> FromRequest<S> for GitHubEvent
+where
+    S: Send + Sync,
+{
+    type Rejection = ErrorWrapper;
+
+    async fn from_request(req: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
+        if let Some(event) = req
+            .headers()
+            .get("X-GitHub-Event")
+        {
+            if event != "workflow_run" {
+                return Err(ErrorWrapper::IgnoredType(
+                    event
+                        .to_str()
+                        .unwrap()
+                        .to_owned(),
+                ));
+            }
+            let result = Json::<RequestPayload>::from_request(req, state).await;
+            match result {
+                Ok(json) => Ok(GitHubEvent(json)),
+                Err(problem) => Err(ErrorWrapper::JsonFailure(problem)),
+            }
+        } else {
+            return Err(ErrorWrapper::MissingHeader);
+        }
     }
 }
 
 /// Handler for incoming webhook requests. This will extract the supplied
 /// WorkflowRun, fire off the query to get its jobs and steps, then process
 /// that into telemetry.
-async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWrapper> {
+async fn receive_post(GitHubEvent(payload): GitHubEvent) -> Result<(), ErrorWrapper> {
     let path = payload
         .workflow_run
         .path
@@ -103,7 +168,19 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
         payload
             .workflow_run
             .conclusion
+            .clone()
+            .unwrap_or("null".to_string())
     );
+
+    // make a decision about whether this is a request we can handle
+
+    if payload.action != "completed" {
+        return Err(ErrorWrapper::IgnoredAction(
+            payload
+                .action
+                .clone(),
+        ));
+    }
 
     // Now use those fields to form the Config object that will be used to
     // drive processing the run.
@@ -111,10 +188,12 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
     let config = Config {
         owner: payload
             .organization
-            .login,
+            .login
+            .clone(),
         repository: payload
             .repository
-            .name,
+            .name
+            .clone(),
         workflow: filename,
         devel: false,
     };
@@ -123,10 +202,10 @@ async fn receive_post(Json(payload): Json<RequestPayload>) -> Result<(), ErrorWr
 
     let result = crate::process_run(&config, &client, &payload.workflow_run).await;
 
-    // if there was a problem wrap it in the adaptor type so we get something
+    // if there was a problem wrap it in the adapter type so we get something
     // that converts via IntoResponse.
     match result {
         Ok(_) => Ok(()),
-        Err(err) => Err(ErrorWrapper(err)),
+        Err(err) => Err(ErrorWrapper::AnyhowError(err)),
     }
 }

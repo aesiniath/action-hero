@@ -1,14 +1,15 @@
 use anyhow::Result;
+use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
-use tracing::debug;
 use tracing::info;
+use tracing::{debug, warn};
 
 use crate::VERSION;
-use crate::get_program_start;
+use crate::{get_api_token, get_program_start};
 
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
@@ -36,7 +37,7 @@ pub(crate) struct WorkflowRun {
     pub(crate) display_title: String,
     pub(crate) event: String, // what caused the workflow to run
     pub(crate) status: String,
-    pub(crate) conclusion: String,
+    pub(crate) conclusion: Option<String>,
     #[serde(with = "rfc3339")]
     pub(crate) created_at: OffsetDateTime,
     #[serde(with = "rfc3339")]
@@ -132,11 +133,53 @@ struct ResponseJobs {
     jobs: Vec<WorkflowJob>,
 }
 
+// an error to convey any serde_json decoding problem.
+#[derive(Debug)]
+pub(crate) enum GitHubProblem {
+    RemoteFailure(reqwest::Error),
+    ApiError(StatusCode),
+    DecodeFailure(serde_json::Error),
+}
+
+impl From<reqwest::Error> for GitHubProblem {
+    fn from(error: reqwest::Error) -> Self {
+        GitHubProblem::RemoteFailure(error)
+    }
+}
+
+impl From<serde_json::Error> for GitHubProblem {
+    fn from(error: serde_json::Error) -> Self {
+        GitHubProblem::DecodeFailure(error)
+    }
+}
+
+impl std::fmt::Display for GitHubProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GitHubProblem::RemoteFailure(e) => write!(f, "Remote failure: {:?}", e),
+            GitHubProblem::ApiError(status) => {
+                write!(f, "Error response from GitHub API: {} ", status)
+            }
+            GitHubProblem::DecodeFailure(e) => write!(f, "Decode failure: {:?}", e),
+        }
+    }
+}
+
+impl std::error::Error for GitHubProblem {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            GitHubProblem::RemoteFailure(e) => Some(e),
+            GitHubProblem::ApiError(_) => None,
+            GitHubProblem::DecodeFailure(e) => Some(e),
+        }
+    }
+}
+
 pub(crate) async fn retrieve_run_jobs(
     config: &Config,
     client: &reqwest::Client,
     run: &WorkflowRun,
-) -> Result<Vec<WorkflowJob>> {
+) -> Result<Vec<WorkflowJob>, GitHubProblem> {
     info!("List Jobs in Run {}", run.run_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/runs/{}/jobs",
@@ -150,16 +193,29 @@ pub(crate) async fn retrieve_run_jobs(
         .send()
         .await?;
 
+    // we get the whole body, then attempt to deserialize it. This allows us
+    // to trap error responses coming from their API rather than just breaking
+    // with decode failures. First however, we check the response code to find
+    // out if we should even be trying to parse
+
+    let status = response.status();
     let body = response
-        .json::<ResponseJobs>()
+        .text()
         .await?;
 
-    Ok(body.jobs)
+    if status != StatusCode::OK {
+        warn!("{}", status);
+        return Err(GitHubProblem::ApiError(status));
+    }
+
+    let json: ResponseJobs = serde_json::from_str(&body)?;
+
+    Ok(json.jobs)
 }
 
 pub(crate) fn setup_api_client() -> Result<reqwest::Client> {
-    // get GITHUB_TOKEN value from environment variable
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    // get GITHUB_TOKEN value passed in from environment variable
+    let token = get_api_token();
 
     // Initialize a request Client as we will be making many requests of
     // the GitHub API.

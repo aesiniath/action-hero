@@ -90,6 +90,8 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
         // and stupidly, get it out again
         let span = context.span();
 
+        span.set_attribute(KeyValue::new("layer", "Job"));
+
         span.set_attribute(KeyValue::new("job_id", job.job_id as i64));
 
         span.set_attribute(KeyValue::new("conclusion", job.conclusion));
@@ -131,6 +133,9 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
             // because context has a current Span present within it this
             // will create the new Span as a child of that one as parent!
             let mut span = tracer.build_with_context(builder, &context);
+
+            span.set_attribute(KeyValue::new("layer", "Step"));
+
             span.set_attribute(KeyValue::new("status", step.status));
 
             if step.conclusion == "failure" {
@@ -204,6 +209,8 @@ pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Cont
     // create the span that will be the root span
     let mut span = tracer.build_with_context(builder, &context);
 
+    span.set_attribute(KeyValue::new("layer", "Run"));
+
     span.set_attribute(KeyValue::new("owner", owner));
 
     span.set_attribute(KeyValue::new("repository", repository));
@@ -212,8 +219,9 @@ pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Cont
 
     span.set_attribute(KeyValue::new("run_id", run.run_id as i64));
 
-    span.set_attribute(KeyValue::new("conclusion", conclusion));
-
+    if let Some(value) = conclusion {
+        span.set_attribute(KeyValue::new("conclusion", value));
+    }
     span.set_attribute(KeyValue::new("status", status));
 
     span.set_attribute(KeyValue::new("html_url", html_url));
