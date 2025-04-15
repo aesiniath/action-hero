@@ -128,18 +128,7 @@ async fn main() -> Result<()> {
                     .expect("Unable to parse supplied --port value"),
             };
 
-            let owner = String::new();
-            let repository = String::new();
-            let workflow = String::new();
-
-            let config = Config {
-                owner,
-                repository,
-                workflow,
-                devel,
-            };
-
-            run_listen(&config, port).await?;
+            run_listen(port).await?;
         }
         Some(("query", submatches)) => {
             // Now we get the details of what repository we're going to get the Action
@@ -198,7 +187,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(_config: &Config, port: u32) -> Result<()> {
+async fn run_listen(port: u32) -> Result<()> {
     webhook::run_webserver(port).await
 }
 
