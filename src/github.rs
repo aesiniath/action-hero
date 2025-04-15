@@ -9,7 +9,7 @@ use tracing::info;
 use tracing::{debug, warn};
 
 use crate::VERSION;
-use crate::get_program_start;
+use crate::{get_api_token, get_program_start};
 
 /// A struct holding the configuration being used to retrieve information from
 /// GitHub's API.
@@ -214,8 +214,8 @@ pub(crate) async fn retrieve_run_jobs(
 }
 
 pub(crate) fn setup_api_client() -> Result<reqwest::Client> {
-    // get GITHUB_TOKEN value from environment variable
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    // get GITHUB_TOKEN value passed in from environment variable
+    let token = get_api_token();
 
     // Initialize a request Client as we will be making many requests of
     // the GitHub API.

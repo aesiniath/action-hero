@@ -21,6 +21,22 @@ fn get_program_start() -> &'static OffsetDateTime {
     PROGRAM_START.wait()
 }
 
+static GITHUB_TOKEN: OnceLock<String> = OnceLock::new();
+
+// get GITHUB_TOKEN value from environment variable. We go to the trouble of
+// having this in a global variable so we can ensure to check for it at
+// program start.
+fn set_api_token() {
+    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    GITHUB_TOKEN
+        .set(token)
+        .unwrap()
+}
+
+fn get_api_token() -> &'static String {
+    GITHUB_TOKEN.wait()
+}
+
 mod github;
 mod history;
 mod traces;
@@ -98,6 +114,9 @@ async fn main() -> Result<()> {
     // this program started running.
 
     let devel = std::env::var("HERO_DEVELOPER").is_ok();
+
+    // ensure GitHub API token available from environment
+    set_api_token();
 
     match matches.subcommand() {
         Some(("listen", submatches)) => {
