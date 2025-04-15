@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
-use tracing::{debug, warn};
 use tracing::info;
+use tracing::{debug, warn};
 
 use crate::VERSION;
 use crate::get_program_start;
@@ -195,8 +195,8 @@ pub(crate) async fn retrieve_run_jobs(
 
     // we get the whole body, then attempt to deserialize it. This allows us
     // to trap error responses coming from their API rather than just breaking
-    // with decode failures. First however, we check the response code to find out
-    // if we should even be trying to parse
+    // with decode failures. First however, we check the response code to find
+    // out if we should even be trying to parse
 
     let status = response.status();
     let body = response
