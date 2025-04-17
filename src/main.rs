@@ -23,11 +23,32 @@ fn get_program_start() -> &'static OffsetDateTime {
 
 static GITHUB_TOKEN: OnceLock<String> = OnceLock::new();
 
-// get GITHUB_TOKEN value from environment variable. We go to the trouble of
-// having this in a global variable so we can ensure to check for it at
-// program start.
+// get GITHUB_TOKEN value, either from the system credentials store of
+// directly from an environment variable. We go to the trouble of having this
+// in a global variable so we can ensure to check for it at program start.
 fn set_api_token() {
-    let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable not set");
+    let token = match std::env::var("GITHUB_TOKEN") {
+        Result::Ok(token) => token,
+        Result::Err(_) => match std::env::var("CREDENTIALS_DIRECTORY") {
+            Result::Ok(directory) => {
+                // form the target filename
+                let path = format!("{}/github", directory);
+
+                // read the credential file
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|_| panic!("Failed to read token file at {}", path));
+
+                // trim pesky trailing newlines that humans leave in their files
+                contents
+                    .trim()
+                    .to_string()
+            }
+            Result::Err(_) => panic!(
+                "Either a CREDENTIALS_DIRECTORY or GITHUB_TOKEN environment variable must be set."
+            ),
+        },
+    };
+
     GITHUB_TOKEN
         .set(token)
         .unwrap()
