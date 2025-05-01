@@ -139,6 +139,7 @@ pub(crate) enum GitHubProblem {
     RemoteFailure(reqwest::Error),
     ApiError(StatusCode),
     DecodeFailure(serde_json::Error),
+    MissingHeader,
 }
 
 impl From<reqwest::Error> for GitHubProblem {
@@ -209,6 +210,66 @@ pub(crate) async fn retrieve_run_jobs(
     }
 
     let json: ResponseJobs = serde_json::from_str(&body)?;
+
+    Ok(json.jobs)
+}
+
+pub(crate) async fn retrieve_job_log(
+    config: &Config,
+    client: &reqwest::Client,
+    job_id: u64,
+) -> Result<Vec<WorkflowJob>, GitHubProblem> {
+    info!("Retrieve logs for jobs {}", job_id);
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/actions/jobs/{}/logs",
+        config.owner, config.repository, job_id
+    );
+
+    debug!(?url);
+
+    let response = client
+        .get(url)
+        .send()
+        .await?;
+
+    // we get the whole body, then attempt to deserialize it. This allows us
+    // to trap error responses coming from their API rather than just breaking
+    // with decode failures. First however, we check the response code to find
+    // out if we should even be trying to parse
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await?;
+
+    if status != StatusCode::FOUND {
+        warn!("{}", status);
+        return Err(GitHubProblem::ApiError(status));
+    }
+
+    // get the Location header from the response
+    let location = response
+        .headers()
+        .get("Location")
+        .ok_or(GitHubProblem::MissingHeader)?;
+
+    // Now we go again, attempting to retrieve the log output using the value
+    // in the retuned location header:
+
+    let url = location
+        .to_str()
+        .unwrap();
+
+    debug!(?url);
+
+    let response = client
+        .get(url)
+        .send()
+        .await?;
+
+    let body = response
+        .text()
+        .await?;
 
     Ok(json.jobs)
 }
