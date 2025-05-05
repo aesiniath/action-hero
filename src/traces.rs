@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use crate::VERSION;
-use crate::github::{Config, WorkflowJob, WorkflowRun};
+use crate::github::{Config, GitHubProblem, WorkflowJob, WorkflowRun, retrieve_job_log};
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
 /// represent start and end times (which makes sense, given that is mostly
@@ -62,7 +62,13 @@ fn form_trace_id(config: &Config, run_id: u64) -> TraceId {
 // the run, so the root span can be updated accordingly. We originally had
 // "context" named "parent" was a somewhat misleading name; it is the current
 // Context _containing_ a span and as such will become the parent.
-pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<WorkflowJob>) {
+pub(crate) async fn display_job_steps(
+    config: &Config,
+    client: &reqwest::Client,
+    context: &Context,
+    run: &WorkflowRun,
+    jobs: Vec<WorkflowJob>,
+) -> Result<(), GitHubProblem> {
     let provider = global::tracer_provider();
     let tracer = provider.tracer(module_path!());
 
@@ -142,6 +148,9 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
                 span.set_status(opentelemetry::trace::Status::Error {
                     description: Cow::Borrowed("Step failed"),
                 });
+
+                let message = retrieve_job_log(config, client, job.job_id).await?;
+                span.set_attribute(KeyValue::new("exception.message", message));
             }
             span.set_attribute(KeyValue::new("conclusion", step.conclusion));
 
@@ -153,6 +162,8 @@ pub(crate) fn display_job_steps(context: &Context, run: &WorkflowRun, jobs: Vec<
         // be children of this job's span.
         span.end_with_timestamp(job_finish);
     }
+
+    Ok(())
 }
 
 pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Context {

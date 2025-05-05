@@ -245,7 +245,7 @@ async fn process_run(
 
     let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, client, &run).await?;
 
-    traces::display_job_steps(&context, &run, jobs);
+    traces::display_job_steps(&config, client, &context, &run, jobs).await?;
 
     let trace_id = traces::finalize_root_span(&context, &run);
 
