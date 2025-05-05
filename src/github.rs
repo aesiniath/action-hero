@@ -220,7 +220,7 @@ pub(crate) async fn retrieve_job_log(
     config: &Config,
     client: &reqwest::Client,
     job_id: u64,
-) -> Result<Vec<WorkflowJob>, GitHubProblem> {
+) -> Result<String, GitHubProblem> {
     info!("Retrieve logs for jobs {}", job_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/jobs/{}/logs",
@@ -240,9 +240,6 @@ pub(crate) async fn retrieve_job_log(
     // out if we should even be trying to parse
 
     let status = response.status();
-    let body = response
-        .text()
-        .await?;
 
     if status != StatusCode::FOUND {
         warn!("{}", status);
@@ -271,9 +268,17 @@ pub(crate) async fn retrieve_job_log(
 
     let body = response
         .text()
-        .await?;
+        .await?; // FIXME we need to make this streaming
 
-    Ok(json.jobs)
+    let possible = body
+        .lines()
+        .find(|line| line.contains("rror:"));
+
+    if let Some(message) = possible {
+        Ok(message.to_string())
+    } else {
+        Ok(String::new())
+    }
 }
 
 pub(crate) fn setup_api_client() -> Result<reqwest::Client> {
