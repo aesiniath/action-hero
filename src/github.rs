@@ -162,6 +162,7 @@ impl std::fmt::Display for GitHubProblem {
                 write!(f, "Error response from GitHub API: {} ", status)
             }
             GitHubProblem::DecodeFailure(e) => write!(f, "Decode failure: {:?}", e),
+            GitHubProblem::MissingHeader => write!(f, "Missing header"),
         }
     }
 }
@@ -172,6 +173,7 @@ impl std::error::Error for GitHubProblem {
             GitHubProblem::RemoteFailure(e) => Some(e),
             GitHubProblem::ApiError(_) => None,
             GitHubProblem::DecodeFailure(e) => Some(e),
+            GitHubProblem::MissingHeader => None,
         }
     }
 }
