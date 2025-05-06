@@ -2,7 +2,14 @@
 name = "hero"
 description = "Send GitHub Actions workflow history to OpenTelemetry as traces and spans"
 version = "0.1.0"
+license = "MIT"
+authors = [ "Andrew Cowie" ]
 edition = "2024"
+
+[package.metadata.deb]
+name = "action-hero"
+maintainer-scripts = "debian/"
+systemd-units = { unit-name = "action-hero", enable = false }
 
 [dependencies]
 anyhow = "1.0.97"
