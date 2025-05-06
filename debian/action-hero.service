@@ -1,0 +1,10 @@
+[Unit]
+Description=Action Hero
+
+[Service]
+LoadCredential=github
+Environment="RUST_LOG=hero=debug,*=warn"
+ExecStart=/usr/bin/hero listen
+
+[Install]
+WantedBy=multi-user.target
