@@ -120,7 +120,18 @@ pub(crate) async fn display_job_steps(
 
             let step_duration = step_finish - step_start;
 
-            println!("    {}: {}, {}", step.name, step.status, step_duration);
+            println!(
+                "    {}: {},{} {}",
+                step.name, step.status, step.conclusion, step_duration
+            );
+
+            // If GitHub skipped a step we don't need to send telemetry about
+            // it. Otherwise we'd get a distribution where lots of useful
+            // steps had instances with approximately 0 ms duration.
+            
+            if step.conclusion == "skipped" {
+                continue;
+            }
 
             // Get read to send OpenTelemetry data
 
