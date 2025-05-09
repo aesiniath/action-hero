@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
-use tracing::info;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::VERSION;
 use crate::{get_api_token, get_program_start};
@@ -217,7 +216,7 @@ pub(crate) async fn retrieve_job_log(
     config: &Config,
     client: &reqwest::Client,
     job_id: u64,
-) -> Result<String, GitHubProblem> {
+) -> Result<Option<String>, GitHubProblem> {
     info!("Retrieve logs for jobs {}", job_id);
     let url = format!(
         "https://api.github.com/repos/{}/{}/actions/jobs/{}/logs",
@@ -266,11 +265,12 @@ pub(crate) async fn retrieve_job_log(
                 .to_lowercase()
                 .contains("error:")
         });
-    debug!(possible);
+
     if let Some(message) = possible {
-        Ok(message.to_string())
+        debug!(?message);
+        Ok(Some(message.to_string()))
     } else {
-        Ok(String::new())
+        Ok(None)
     }
 }
 

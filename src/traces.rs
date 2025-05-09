@@ -149,8 +149,9 @@ pub(crate) async fn display_job_steps(
                     description: Cow::Borrowed("Step failed"),
                 });
 
-                let message = retrieve_job_log(config, client, job.job_id).await?;
-                span.set_attribute(KeyValue::new("exception.message", message));
+                if let Some(message) = retrieve_job_log(config, client, job.job_id).await? {
+                    span.set_attribute(KeyValue::new("exception.message", message));
+                }
             }
             span.set_attribute(KeyValue::new("conclusion", step.conclusion));
 
