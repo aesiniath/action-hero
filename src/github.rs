@@ -139,7 +139,6 @@ pub(crate) enum GitHubProblem {
     RemoteFailure(reqwest::Error),
     ApiError(StatusCode),
     DecodeFailure(serde_json::Error),
-    MissingHeader,
 }
 
 impl From<reqwest::Error> for GitHubProblem {
@@ -162,7 +161,6 @@ impl std::fmt::Display for GitHubProblem {
                 write!(f, "Error response from GitHub API: {} ", status)
             }
             GitHubProblem::DecodeFailure(e) => write!(f, "Decode failure: {:?}", e),
-            GitHubProblem::MissingHeader => write!(f, "Missing header"),
         }
     }
 }
@@ -173,7 +171,6 @@ impl std::error::Error for GitHubProblem {
             GitHubProblem::RemoteFailure(e) => Some(e),
             GitHubProblem::ApiError(_) => None,
             GitHubProblem::DecodeFailure(e) => Some(e),
-            GitHubProblem::MissingHeader => None,
         }
     }
 }
@@ -234,37 +231,23 @@ pub(crate) async fn retrieve_job_log(
         .send()
         .await?;
 
-    // we get the whole body, then attempt to deserialize it. This allows us
-    // to trap error responses coming from their API rather than just breaking
-    // with decode failures. First however, we check the response code to find
-    // out if we should even be trying to parse
+    // astonishingly, the request crate follows redirections for you by
+    // default. So we don't need to worry about the 302 Found that the GitHub
+    // API documentation describes at length, and instead just let the client
+    // follow the redirect (and there appears to be more than one).
 
     let status = response.status();
 
-    if status != StatusCode::FOUND {
+    if status != StatusCode::OK {
         warn!("{}", status);
+
+        let body = response
+            .text()
+            .await?;
+        debug!(body);
+
         return Err(GitHubProblem::ApiError(status));
     }
-
-    // get the Location header from the response
-    let location = response
-        .headers()
-        .get("Location")
-        .ok_or(GitHubProblem::MissingHeader)?;
-
-    // Now we go again, attempting to retrieve the log output using the value
-    // in the retuned location header:
-
-    let url = location
-        .to_str()
-        .unwrap();
-
-    debug!(?url);
-
-    let response = client
-        .get(url)
-        .send()
-        .await?;
 
     let body = response
         .text()
@@ -274,6 +257,7 @@ pub(crate) async fn retrieve_job_log(
         .lines()
         .find(|line| line.contains("rror:"));
 
+    debug!(possible);
     if let Some(message) = possible {
         Ok(message.to_string())
     } else {
