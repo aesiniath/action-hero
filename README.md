@@ -35,13 +35,13 @@ You pass the name of the repository (qualified with the owner or organization
 it belongs to) and the name of the workflow.
 
 ```
-$ hero octocat/hello-world check.yaml
+$ hero query octocat/hello-world check.yaml
 ```
 
 In this example, the repository is `hello-world` in the `octocat` account, and
 the workflow is identified by its filename, `check.yaml`.
 
-After a Run's Jobs are recieved, transformed into telemetry, and sent, a
+After a Run's Jobs are received, transformed into telemetry, and sent, a
 record is made of this having been done on the local filesystem. This allows
 **action-hero** to be re-run and only new Runs will be sent.
 
@@ -67,6 +67,21 @@ An example config file can be found in the _doc/_ directory; just enter an
 appropriate Ingest Key for the Honeycomb environment you wish to send to.
 Traces will appear in the `github-actions` service dataset.
 
+## Use via webook
+
+Instead of running **action-hero** on demand, you can instead configure it to
+run as a webhook receiver, listening for HTTP connections coming from GitHub.
+
+
+```
+$ hero listen
+```
+
+The program will listen on port `34484` unless instructed otherwise with the
+`--port` option. Since GitHub will expect to be talking HTTPS you should run
+this program behind a reverse proxy such as Nginx with an appropriate
+certificate installed.
+
 ## Development
 
 It's difficult to develop a program like this because once you've processed a
@@ -82,5 +97,5 @@ query in Honeycomb and immediately find the trace that was just submitted so
 you can iterate on the program. Invoke the override as follows:
 
 ```
-$ RUST_LOG=hero=debug,*=warn HERO_DEVELOPER=true cargo run -- octocat/hello-world check.yaml
+$ RUST_LOG=hero=debug,*=warn HERO_DEVELOPER=true cargo run -- query octocat/hello-world check.yaml
 ```

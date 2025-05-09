@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use time::Duration;
 use time::OffsetDateTime;
 use time::serde::rfc3339;
-use tracing::info;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::VERSION;
 use crate::{get_api_token, get_program_start};
@@ -211,6 +210,68 @@ pub(crate) async fn retrieve_run_jobs(
     let json: ResponseJobs = serde_json::from_str(&body)?;
 
     Ok(json.jobs)
+}
+
+pub(crate) async fn retrieve_job_log(
+    config: &Config,
+    client: &reqwest::Client,
+    job_id: u64,
+) -> Result<Option<String>, GitHubProblem> {
+    info!("Retrieve logs for jobs {}", job_id);
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/actions/jobs/{}/logs",
+        config.owner, config.repository, job_id
+    );
+
+    debug!(?url);
+
+    let response = client
+        .get(url)
+        .send()
+        .await?;
+
+    // astonishingly, the request crate follows redirections for you by
+    // default. So we don't need to worry about the 302 Found that the GitHub
+    // API documentation describes at length, and instead just let the client
+    // follow the redirect (and there appears to be more than one).
+
+    let status = response.status();
+
+    if status != StatusCode::OK {
+        warn!("{}", status);
+
+        let body = response
+            .text()
+            .await?;
+        debug!(body);
+
+        return Err(GitHubProblem::ApiError(status));
+    }
+
+    let body = response
+        .text()
+        .await?; // FIXME we need to make this streaming
+
+    let possible = body
+        .lines()
+        .filter_map(|line| {
+            // trim off the timestamp
+            line.split_once(' ')
+                .map(|(_, message)| message)
+        })
+        .find(|message| {
+            // see if an error marker is present
+            message
+                .to_lowercase()
+                .contains("error:")
+        });
+
+    if let Some(message) = possible {
+        debug!(?message);
+        Ok(Some(message.to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn setup_api_client() -> Result<reqwest::Client> {
