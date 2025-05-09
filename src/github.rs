@@ -255,8 +255,17 @@ pub(crate) async fn retrieve_job_log(
 
     let possible = body
         .lines()
-        .find(|line| line.contains("rror:"));
-
+        .filter_map(|line| {
+            // trim off the timestamp
+            line.split_once(' ')
+                .map(|(_, message)| message)
+        })
+        .find(|message| {
+            // see if an error marker is present
+            message
+                .to_lowercase()
+                .contains("error:")
+        });
     debug!(possible);
     if let Some(message) = possible {
         Ok(message.to_string())
