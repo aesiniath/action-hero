@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::{
     self,
     path::{Path, PathBuf},
@@ -31,7 +31,7 @@ pub(crate) fn form_record_filename(prefix: &str, config: &Config, run: &Workflow
 pub(crate) fn check_is_submitted(path: &Path) -> Result<bool> {
     let directory = path
         .parent()
-        .unwrap();
+        .ok_or(anyhow!("Could not get Path"))?;
 
     debug!(?path);
 

@@ -1,6 +1,7 @@
 //! This is a module to receive webhooks from GitHub when a GitHub Action
 //! workflow is run.
 
+use anyhow::anyhow;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::FromRequest;
@@ -136,7 +137,7 @@ async fn receive_post(GitHubEvent(payload): GitHubEvent) -> Result<(), ErrorWrap
     let filename = path
         .split('/')
         .last()
-        .unwrap()
+        .ok_or(anyhow!("Could not get Filename"))?
         .to_string();
 
     // This served as a useful diagnostic to ensure we had the right fields
