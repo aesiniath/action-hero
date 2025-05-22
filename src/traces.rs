@@ -51,11 +51,10 @@ fn form_trace_id(config: &Config, run_id: u64) -> TraceId {
     // Trace IDs are defined as being 128 bits, so somewhat arbitrarily we
     // just select half of the 256 bit hash result.
 
-    let lower: [u8; 16] = result[..16]
-        .try_into()
-        .unwrap();
-
-    TraceId::from_bytes(lower)
+    match result[..16].try_into() {
+        Ok(lower) => TraceId::from_bytes(lower),
+        Err(_) => TraceId::INVALID,
+    }
 }
 
 // returns the earliest start and latest finishing time of jobs seen within
@@ -128,7 +127,7 @@ pub(crate) async fn display_job_steps(
             // If GitHub skipped a step we don't need to send telemetry about
             // it. Otherwise we'd get a distribution where lots of useful
             // steps had instances with approximately 0 ms duration.
-            
+
             if step.conclusion == "skipped" {
                 continue;
             }
