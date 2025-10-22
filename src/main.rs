@@ -243,7 +243,7 @@ async fn process_run(
 
     let context = traces::establish_root_context(&config, &run);
 
-    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(&config, client, &run).await?;
+    let jobs: Vec<WorkflowJob> = github::retrieve_run_jobs(config, client, run).await?;
 
     traces::display_job_steps(&config, client, &context, &run, jobs).await?;
 
