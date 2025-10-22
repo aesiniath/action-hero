@@ -32,7 +32,7 @@ fn set_api_token() {
         Result::Err(_) => match std::env::var("CREDENTIALS_DIRECTORY") {
             Result::Ok(directory) => {
                 // form the target filename
-                let path = format!("{}/github", directory);
+                let path = format!("{}/receiver-github-token", directory);
 
                 // read the credential file
                 let contents = std::fs::read_to_string(&path)
