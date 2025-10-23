@@ -1,6 +1,8 @@
 //! This is a module to receive webhooks from GitHub when a GitHub Action
 //! workflow is run.
 
+use std::net::Ipv4Addr;
+
 use anyhow::anyhow;
 use axum::Json;
 use axum::body::Body;
@@ -13,11 +15,11 @@ use tracing::info;
 
 use crate::github::{self, Config};
 
-pub(crate) async fn run_webserver(port: u32) -> anyhow::Result<()> {
+pub(crate) async fn run_webserver(host: Ipv4Addr, port: u16) -> anyhow::Result<()> {
     let router = Router::new().route("/", get(hello_world).post(receive_post));
 
-    let address = format!("127.0.0.1:{}", port);
-    info!("Listening on {}", address);
+    info!("Listening on {:?}:{}", host, port);
+    let address = (host, port);
 
     let listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(listener, router).await?;

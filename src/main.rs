@@ -1,13 +1,11 @@
 use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
-use std::sync::OnceLock;
+use std::{net::Ipv4Addr, sync::OnceLock};
 use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber;
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-
-const PREFIX: &str = "record";
 
 static PROGRAM_START: OnceLock<OffsetDateTime> = OnceLock::new();
 
@@ -76,8 +74,6 @@ async fn main() -> Result<()> {
     // Initialize the opentelemetry exporter
     let provider = traces::setup_telemetry_machinery();
 
-    history::ensure_record_directory(PREFIX)?;
-
     // Configure command-line argument parser
     let matches = Command::new("hero")
             .version(VERSION)
@@ -103,31 +99,40 @@ async fn main() -> Result<()> {
                     .action(ArgAction::Version))
             .subcommand(
                 Command::new("listen")
-                        .about("Run HTTP server to receive webhook events from GitHub")
-                                .arg(Arg::new("port")
-                                    .long("port")
-                                    .long_help("Override the port the receiver will listen on. The default is port 34484")
-                                )
+                    .about("Run HTTP server to receive webhook events from GitHub")
+                    .arg(Arg::new("host")
+                        .long("host")
+                        .long_help("Override the address the receiver will listen on. The default is 0.0.0.0")
+                    )
+                    .arg(Arg::new("port")
+                        .long("port")
+                        .long_help("Override the port the receiver will listen on. The default is port 34484")
+                    )
             )
             .subcommand(
                 Command::new("query")
-                        .about("Query workflow runs directly")
-                        .arg(
-                            Arg::new("count")
-                                .long("count" )
-                                .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
-                            )
-                        .arg(
-                                Arg::new("repository")
-                                    .action(ArgAction::Set)
-                                    .required(true)
-                                    .help("Name of the GitHub organization and repository to retrieve workflows from. This must be specified in the form \"owner/repo\""))
-                            .arg(
-                                Arg::new("workflow")
-                                    .action(ArgAction::Set)
-                                    .required(true)
-                                    .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\""))
-
+                    .about("Query workflow runs directly")
+                    .arg(
+                        Arg::new("count")
+                            .long("count" )
+                            .long_help("The number of Runs for the specified Workflow to retrieve from GitHub and upload to Honeycomb. The default if unspecified is to check the 10 most recent Runs.")
+                        )
+                    .arg(
+                        Arg::new("repository")
+                            .action(ArgAction::Set)
+                            .required(true)
+                            .long_help("Name of the GitHub organization and repository to retrieve workflows from. This must be specified in the form \"owner/repo\"."))
+                    .arg(
+                        Arg::new("workflow")
+                            .action(ArgAction::Set)
+                            .required(true)
+                            .help("Name of the GitHub Actions workflow to present as a trace. This is typically a filename such as \"check.yaml\"."))
+                    .arg(
+                        Arg::new("state-dir")
+                            .long("state-dir")
+                            .action(ArgAction::Set)
+                            .long_help("Directory where records of processed Runs are written. The default is \"record\" under the current working directory.")
+                        )
             )
             .get_matches();
 
@@ -141,15 +146,23 @@ async fn main() -> Result<()> {
 
     match matches.subcommand() {
         Some(("listen", submatches)) => {
+            let host = submatches.get_one::<String>("host");
+            let host = match host {
+                None => Ipv4Addr::UNSPECIFIED,
+                Some(value) => value
+                    .parse()
+                    .expect("Unable to parse supplied --host value"),
+            };
+
             let port = submatches.get_one::<String>("port");
             let port = match port {
                 None => 34484,
                 Some(value) => value
-                    .parse::<u32>()
+                    .parse::<u16>()
                     .expect("Unable to parse supplied --port value"),
             };
 
-            run_listen(port).await?;
+            run_listen(host, port).await?;
         }
         Some(("query", submatches)) => {
             // Now we get the details of what repository we're going to get the Action
@@ -191,7 +204,15 @@ async fn main() -> Result<()> {
                     .expect("Unable to parse supplied --count value"),
             };
 
-            run_query(&config, count).await?;
+            let state_dir = submatches.get_one::<String>("state-dir");
+            let state_dir = match state_dir {
+                None => "record",
+                Some(value) => value,
+            };
+
+            history::ensure_record_directory(state_dir)?;
+
+            run_query(&config, count, state_dir).await?;
         }
         Some(_) => {
             println!("No valid subcommand was used")
@@ -208,17 +229,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(port: u32) -> Result<()> {
-    webhook::run_webserver(port).await
+async fn run_listen(host: Ipv4Addr, port: u16) -> Result<()> {
+    webhook::run_webserver(host, port).await
 }
 
-async fn run_query(config: &Config, count: u32) -> Result<()> {
+async fn run_query(config: &Config, count: u32, prefix: &str) -> Result<()> {
     let client = github::setup_api_client()?;
 
     let runs: Vec<WorkflowRun> = github::retrieve_workflow_runs(&config, &client, count).await?;
 
     for run in &runs {
-        let path = history::form_record_filename(PREFIX, &config, run);
+        let path = history::form_record_filename(prefix, config, run);
 
         debug!(run.run_id);
 
