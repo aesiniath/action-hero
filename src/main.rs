@@ -1,6 +1,6 @@
 use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
-use std::sync::OnceLock;
+use std::{net::Ipv4Addr, sync::OnceLock};
 use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber;
@@ -100,6 +100,10 @@ async fn main() -> Result<()> {
             .subcommand(
                 Command::new("listen")
                     .about("Run HTTP server to receive webhook events from GitHub")
+                    .arg(Arg::new("host")
+                        .long("host")
+                        .long_help("Override the address the receiver will listen on. The default is 0.0.0.0")
+                    )
                     .arg(Arg::new("port")
                         .long("port")
                         .long_help("Override the port the receiver will listen on. The default is port 34484")
@@ -142,15 +146,23 @@ async fn main() -> Result<()> {
 
     match matches.subcommand() {
         Some(("listen", submatches)) => {
+            let host = submatches.get_one::<String>("host");
+            let host = match host {
+                None => Ipv4Addr::UNSPECIFIED,
+                Some(value) => value
+                    .parse()
+                    .expect("Unable to parse supplied --host value"),
+            };
+
             let port = submatches.get_one::<String>("port");
             let port = match port {
                 None => 34484,
                 Some(value) => value
-                    .parse::<u32>()
+                    .parse::<u16>()
                     .expect("Unable to parse supplied --port value"),
             };
 
-            run_listen(port).await?;
+            run_listen(host, port).await?;
         }
         Some(("query", submatches)) => {
             // Now we get the details of what repository we're going to get the Action
@@ -217,8 +229,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_listen(port: u32) -> Result<()> {
-    webhook::run_webserver(port).await
+async fn run_listen(host: Ipv4Addr, port: u16) -> Result<()> {
+    webhook::run_webserver(host, port).await
 }
 
 async fn run_query(config: &Config, count: u32, prefix: &str) -> Result<()> {
