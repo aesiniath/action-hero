@@ -4,6 +4,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use time::Duration;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use time::serde::rfc3339;
 use tracing::{debug, info, warn};
 
@@ -125,6 +126,24 @@ pub(crate) struct WorkflowStep {
     pub(crate) started_at: OffsetDateTime,
     #[serde(with = "rfc3339")]
     pub(crate) completed_at: OffsetDateTime,
+
+    // and now our fields that are NOT in the response object
+    #[serde(default)]
+    pub(crate) uses: Option<String>,
+    #[serde(default)]
+    pub(crate) actions: Vec<WorkflowAction>,
+}
+
+/// A step of a composite action. These are absent from the results returned
+/// by the the main GitHub API, and instead have to be recovered by parsing
+/// the raw log output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WorkflowAction {
+    pub(crate) name: String,
+    pub(crate) id: String,
+    pub(crate) conclusion: String,
+    pub(crate) started_at: OffsetDateTime,
+    pub(crate) completed_at: OffsetDateTime,
 }
 
 #[derive(Deserialize)]
@@ -238,29 +257,34 @@ pub(crate) async fn retrieve_job_log(
     let status = response.status();
 
     if status != StatusCode::OK {
-        warn!("{}", status);
+        // logs expire after a week or less, so if trying to analyse an older
+        // run the program won't be able to access detailed history.
+        warn!("No log available for job {}: {}", job_id, status);
 
-        let body = response
-            .text()
-            .await?;
-        debug!(body);
-
-        return Err(GitHubProblem::ApiError(status));
+        return Ok(None);
     }
 
     let body = response
         .text()
         .await?; // FIXME we need to make this streaming
 
-    let possible = body
+    Ok(Some(body))
+}
+
+fn log_lines(log: &str) -> impl Iterator<Item = (OffsetDateTime, &str)> {
+    log.trim_start_matches('\u{feff}')
         .lines()
         .filter_map(|line| {
-            // trim off the timestamp
-            line.split_once(' ')
-                .map(|(_, message)| message)
+            let (stamp, message) = line.split_once(' ')?;
+            let stamp = OffsetDateTime::parse(stamp, &Rfc3339).ok()?;
+            Some((stamp, message))
         })
+}
+
+pub(crate) fn find_error_message(log: &str) -> Option<&str> {
+    let possible = log_lines(log)
+        .map(|(_, message)| message)
         .find(|message| {
-            // see if an error marker is present
             message
                 .to_lowercase()
                 .contains("error:")
@@ -268,9 +292,154 @@ pub(crate) async fn retrieve_job_log(
 
     if let Some(message) = possible {
         debug!(?message);
-        Ok(Some(message.to_string()))
+    }
+
+    possible
+}
+
+struct LoggedStep {
+    started_at: OffsetDateTime,
+    uses: Option<String>,
+    actions: Vec<WorkflowAction>,
+}
+
+// A step can also run a local path or a Docker image.
+fn parse_uses(message: &str) -> Option<String> {
+    let reference = message
+        .strip_prefix("##[group]Run ")?
+        .trim();
+
+    if reference.contains('@') && !reference.contains(' ') {
+        Some(reference.to_string())
     } else {
-        Ok(None)
+        None
+    }
+}
+
+// Searched from the right; the display name can contain the separator.
+fn parse_marker_field(message: &str, key: &str) -> Option<String> {
+    let (_, rest) = message.rsplit_once(key)?;
+
+    let value = match rest.split_once(';') {
+        Some((value, _)) => value,
+        None => rest.trim_end_matches(']'),
+    };
+
+    Some(value.to_string())
+}
+
+// Only the identifier following it marks where an author supplied name ends.
+fn parse_marker_name(message: &str) -> Option<String> {
+    let (_, rest) = message.split_once("display=")?;
+
+    let (name, _) = rest.rsplit_once(";id=")?;
+
+    Some(name.to_string())
+}
+
+// Composite steps announce themselves the same way top-level ones do, so what
+// falls between the markers bracketing them belongs to the action, not the job.
+fn parse_logged_steps(log: &str) -> Vec<LoggedStep> {
+    let mut steps: Vec<LoggedStep> = Vec::new();
+    let mut pending: Option<(String, String, OffsetDateTime)> = None;
+
+    for (stamp, message) in log_lines(log) {
+        if steps.is_empty() {
+            steps.push(LoggedStep {
+                started_at: stamp,
+                uses: None,
+                actions: Vec::new(),
+            });
+            continue;
+        }
+
+        if message.starts_with("##[start-action") {
+            if let Some(name) = parse_marker_name(message) {
+                let id = parse_marker_field(message, "id=").unwrap_or_default();
+
+                pending = Some((name, id, stamp));
+            }
+            continue;
+        }
+
+        if message.starts_with("##[end-action") {
+            if let Some((name, id, started_at)) = pending.take() {
+                let conclusion = parse_marker_field(message, "conclusion=").unwrap_or_default();
+
+                if let Some(step) = steps.last_mut() {
+                    step.actions
+                        .push(WorkflowAction {
+                            name,
+                            id,
+                            conclusion,
+                            started_at,
+                            completed_at: stamp,
+                        });
+                }
+            }
+            continue;
+        }
+
+        if pending.is_none() && message.starts_with("##[group]Run ") {
+            steps.push(LoggedStep {
+                started_at: stamp,
+                uses: parse_uses(message),
+                actions: Vec::new(),
+            });
+        }
+    }
+
+    steps
+}
+
+// The API truncates step times to whole seconds, which at least puts a step's
+// true start within the second reported, and is how the two are matched here.
+pub(crate) fn refine_step_times(steps: &mut [WorkflowStep], log: &str) {
+    let logged = parse_logged_steps(log);
+
+    let mut matched: Vec<(usize, LoggedStep)> = Vec::new();
+    let mut cursor = 0;
+
+    for entry in logged {
+        let found = (cursor..steps.len()).find(|&index| {
+            let step = &steps[index];
+            let started_at = step.started_at;
+
+            step.conclusion != "skipped"
+                && entry.started_at >= started_at
+                && entry.started_at - started_at < Duration::SECOND
+        });
+
+        if let Some(index) = found {
+            matched.push((index, entry));
+            cursor = index + 1;
+        }
+    }
+
+    let starts: Vec<OffsetDateTime> = matched
+        .iter()
+        .map(|(_, entry)| entry.started_at)
+        .collect();
+
+    for (position, (index, entry)) in matched
+        .into_iter()
+        .enumerate()
+    {
+        let step = &mut steps[index];
+
+        step.started_at = entry.started_at;
+
+        step.completed_at = match starts.get(position + 1) {
+            Some(&next) => next,
+            None => entry
+                .actions
+                .last()
+                .map(|action| action.completed_at)
+                .unwrap_or(step.completed_at),
+        };
+
+        step.uses = entry.uses;
+        step.actions = entry.actions;
     }
 }
 
@@ -299,4 +468,247 @@ pub(crate) fn setup_api_client() -> Result<reqwest::Client> {
         .build()?;
 
     Ok(client)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXCERPT: &str = concat!(
+        "\u{feff}",
+        r#"2026-08-07T12:01:08.8603448Z Current runner version: '2.336.0'
+2026-08-07T12:01:10.5648689Z ##[group]Run actions/checkout@v6
+2026-08-07T12:01:10.6839098Z ##[group]Getting Git version info
+2026-08-07T12:01:11.5460245Z ##[endgroup]
+2026-08-07T12:01:11.5973101Z ##[group]Run apkudo/build-image@v1
+2026-08-07T12:01:11.6136875Z ##[start-action display=Determine Version;id=__apkudo_build-image.determine]
+2026-08-07T12:01:11.6225529Z ##[group]Run podman build containers/internal-proxy \
+2026-08-07T12:01:11.6704561Z ##[end-action id=__apkudo_build-image.determine;outcome=success;conclusion=success;duration_ms=56]
+2026-08-07T12:01:11.6714578Z ##[start-action display=Tag image as :latest;id=__apkudo_build-image.tag-latest]
+2026-08-07T12:02:50.0011764Z ##[end-action id=__apkudo_build-image.tag-latest;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-08-07T12:02:50.0161755Z Post job cleanup.
+"#
+    );
+
+    fn stamp(text: &str) -> OffsetDateTime {
+        OffsetDateTime::parse(text, &Rfc3339).unwrap()
+    }
+
+    fn step(name: &str, started_at: &str, completed_at: &str) -> WorkflowStep {
+        WorkflowStep {
+            name: name.to_string(),
+            status: "completed".to_string(),
+            conclusion: "success".to_string(),
+            started_at: stamp(started_at),
+            completed_at: stamp(completed_at),
+            uses: None,
+            actions: Vec::new(),
+        }
+    }
+
+    fn example_steps() -> Vec<WorkflowStep> {
+        vec![
+            step("Set up job", "2026-08-07T12:01:08Z", "2026-08-07T12:01:10Z"),
+            step(
+                "Checkout repository",
+                "2026-08-07T12:01:10Z",
+                "2026-08-07T12:01:11Z",
+            ),
+            step(
+                "Build image",
+                "2026-08-07T12:01:11Z",
+                "2026-08-07T12:02:50Z",
+            ),
+            step(
+                "Complete job",
+                "2026-08-07T12:02:50Z",
+                "2026-08-07T12:02:50Z",
+            ),
+        ]
+    }
+
+    #[test]
+    fn boundaries_ignore_groups_which_are_not_steps() {
+        let logged = parse_logged_steps(EXCERPT);
+
+        let starts: Vec<OffsetDateTime> = logged
+            .iter()
+            .map(|entry| entry.started_at)
+            .collect();
+
+        assert_eq!(
+            starts,
+            vec![
+                stamp("2026-08-07T12:01:08.8603448Z"),
+                stamp("2026-08-07T12:01:10.5648689Z"),
+                stamp("2026-08-07T12:01:11.5973101Z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn actions_are_recognised_by_their_reference() {
+        let logged = parse_logged_steps(EXCERPT);
+
+        let referenced: Vec<Option<&str>> = logged
+            .iter()
+            .map(|entry| {
+                entry
+                    .uses
+                    .as_deref()
+            })
+            .collect();
+
+        assert_eq!(
+            referenced,
+            vec![
+                None,
+                Some("actions/checkout@v6"),
+                Some("apkudo/build-image@v1")
+            ]
+        );
+    }
+
+    #[test]
+    fn composite_steps_belong_to_the_step_which_ran_them() {
+        let mut steps = example_steps();
+
+        refine_step_times(&mut steps, EXCERPT);
+
+        assert!(
+            steps[1]
+                .actions
+                .is_empty()
+        );
+
+        let actions = &steps[2].actions;
+
+        assert_eq!(actions.len(), 2);
+
+        assert_eq!(actions[0].name, "Determine Version");
+        assert_eq!(actions[0].id, "__apkudo_build-image.determine");
+        assert_eq!(actions[0].conclusion, "success");
+        assert_eq!(actions[0].started_at, stamp("2026-08-07T12:01:11.6136875Z"));
+        assert_eq!(
+            actions[0].completed_at,
+            stamp("2026-08-07T12:01:11.6704561Z")
+        );
+
+        assert_eq!(actions[1].name, "Tag image as :latest");
+        assert_eq!(actions[1].conclusion, "skipped");
+    }
+
+    // ours is derived from the marker timestamps, not the reported duration
+    #[test]
+    fn composite_step_durations_match_the_reported_ones() {
+        let mut steps = example_steps();
+
+        refine_step_times(&mut steps, EXCERPT);
+
+        let action = &steps[2].actions[0];
+
+        let elapsed = action.completed_at - action.started_at;
+
+        assert_eq!(elapsed.whole_milliseconds(), 56);
+    }
+
+    #[test]
+    fn names_may_contain_a_semicolon() {
+        let log = concat!(
+            "2026-08-07T12:01:08.8603448Z Current runner version: '2.336.0'\n",
+            "2026-08-07T12:01:11.5973101Z ##[group]Run apkudo/build-image@v1\n",
+            "2026-08-07T12:01:11.6136875Z ##[start-action display=Tag; then push;id=x.y]\n",
+            "2026-08-07T12:01:11.6704561Z ##[end-action id=x.y;outcome=success;conclusion=success;duration_ms=56]\n"
+        );
+
+        let logged = parse_logged_steps(log);
+
+        let action = &logged[1].actions[0];
+
+        assert_eq!(action.name, "Tag; then push");
+        assert_eq!(action.id, "x.y");
+    }
+
+    #[test]
+    fn steps_take_their_times_from_the_log() {
+        let mut steps = example_steps();
+
+        refine_step_times(&mut steps, EXCERPT);
+
+        assert_eq!(steps[0].started_at, stamp("2026-08-07T12:01:08.8603448Z"));
+        assert_eq!(steps[0].completed_at, stamp("2026-08-07T12:01:10.5648689Z"));
+        assert_eq!(steps[1].started_at, stamp("2026-08-07T12:01:10.5648689Z"));
+        assert_eq!(steps[1].completed_at, stamp("2026-08-07T12:01:11.5973101Z"));
+        assert_eq!(steps[2].started_at, stamp("2026-08-07T12:01:11.5973101Z"));
+
+        // no following step to end it, so its last composite step does
+        assert_eq!(steps[2].completed_at, stamp("2026-08-07T12:02:50.0011764Z"));
+
+        // never announced in the log, so reported times stand
+        assert_eq!(steps[3].started_at, stamp("2026-08-07T12:02:50Z"));
+        assert_eq!(steps[3].completed_at, stamp("2026-08-07T12:02:50Z"));
+    }
+
+    // A step the runner skips is still reported by the API, with a timestamp,
+    // but is never announced in the log. Sharing a second with the step which
+    // follows it, there is nothing but the conclusion to tell them apart.
+    #[test]
+    fn a_skipped_step_does_not_take_the_next_ones_times() {
+        let log = concat!(
+            "2026-08-07T12:01:08.8603448Z Current runner version: '2.336.0'\n",
+            "2026-08-07T12:01:11.5973101Z ##[group]Run echo notifying\n"
+        );
+
+        let mut steps = vec![
+            step("Set up job", "2026-08-07T12:01:08Z", "2026-08-07T12:01:11Z"),
+            step("Deploy", "2026-08-07T12:01:11Z", "2026-08-07T12:01:11Z"),
+            step("Notify", "2026-08-07T12:01:11Z", "2026-08-07T12:01:12Z"),
+        ];
+        steps[1].conclusion = "skipped".to_string();
+
+        refine_step_times(&mut steps, log);
+
+        assert_eq!(steps[1].started_at, stamp("2026-08-07T12:01:11Z"));
+        assert_eq!(steps[2].started_at, stamp("2026-08-07T12:01:11.5973101Z"));
+    }
+
+    #[test]
+    fn steps_no_longer_land_on_whole_seconds() {
+        let mut steps = example_steps();
+
+        refine_step_times(&mut steps, EXCERPT);
+
+        let elapsed = steps[1].completed_at - steps[1].started_at;
+
+        assert!(elapsed > Duration::SECOND);
+        assert_eq!(elapsed, Duration::nanoseconds(1_032_441_200));
+    }
+
+    #[test]
+    fn absent_markers_leave_the_steps_alone() {
+        let mut steps = example_steps();
+
+        refine_step_times(&mut steps, "");
+
+        for (refined, original) in steps
+            .iter()
+            .zip(example_steps())
+        {
+            assert_eq!(refined.started_at, original.started_at);
+            assert_eq!(refined.completed_at, original.completed_at);
+        }
+    }
+
+    #[test]
+    fn error_message_is_found_without_its_timestamp() {
+        let log = concat!(
+            "2026-08-07T12:01:11.6136875Z Getting image source signatures\n",
+            "2026-08-07T12:01:11.6704561Z ##[error]Error: getaddrinfo ENOTFOUND\n"
+        );
+
+        assert_eq!(
+            find_error_message(log),
+            Some("##[error]Error: getaddrinfo ENOTFOUND")
+        );
+    }
 }
