@@ -38,8 +38,10 @@ pub(crate) struct WorkflowRun {
     pub(crate) event: String, // what caused the workflow to run
     pub(crate) status: String,
     pub(crate) conclusion: Option<String>,
+    // "the start time of the latest run. Resets on re-run", as distinct from
+    // created_at which stays with the attempt that has been superseded
     #[serde(with = "rfc3339")]
-    pub(crate) created_at: OffsetDateTime,
+    pub(crate) run_started_at: OffsetDateTime,
     #[serde(with = "rfc3339")]
     pub(crate) updated_at: OffsetDateTime,
     pub(crate) html_url: String,
@@ -91,7 +93,7 @@ pub(crate) async fn retrieve_workflow_runs(
         // near program start time (ie now).
         let delta = if config.devel {
             let program_start = *get_program_start();
-            program_start - run.created_at - Duration::minutes(10)
+            program_start - run.run_started_at - Duration::minutes(10)
         } else {
             Duration::ZERO
         };
@@ -697,6 +699,33 @@ mod tests {
             assert_eq!(refined.started_at, original.started_at);
             assert_eq!(refined.completed_at, original.completed_at);
         }
+    }
+
+    // A re-run keeps the created_at of the attempt it replaced, so the Run
+    // would otherwise appear to have begun long before any of its Jobs.
+    #[test]
+    fn a_re_run_begins_when_the_latest_attempt_did() {
+        let body = r#"{
+            "actor": { "login": "aesiniath" },
+            "id": 31173393911,
+            "run_number": 42,
+            "run_attempt": 2,
+            "head_branch": "main",
+            "name": "Build",
+            "display_title": "Build",
+            "event": "pull_request",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-07T11:16:12Z",
+            "run_started_at": "2026-08-07T12:01:01Z",
+            "updated_at": "2026-08-07T12:02:53Z",
+            "html_url": "https://example.com",
+            "path": ".github/workflows/build.yaml"
+        }"#;
+
+        let run: WorkflowRun = serde_json::from_str(body).unwrap();
+
+        assert_eq!(run.run_started_at, stamp("2026-08-07T12:01:01Z"));
     }
 
     #[test]

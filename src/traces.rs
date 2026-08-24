@@ -283,8 +283,8 @@ pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Cont
     let run_attempt = run.run_attempt as i64;
 
     // adjust the span start time if we are in development mode
-    let created_at = run.created_at + run.delta;
-    let run_start = convert_to_system_time(&created_at);
+    let started_at = run.run_started_at + run.delta;
+    let run_start = convert_to_system_time(&started_at);
 
     // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
     // unhelpful to say the least.
