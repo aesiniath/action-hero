@@ -283,13 +283,20 @@ fn log_lines(log: &str) -> impl Iterator<Item = (OffsetDateTime, &str)> {
         })
 }
 
+// The runner annotates a failure with ##[error], but whatever was being run
+// will have said something more specific first, and says it in its own way.
 pub(crate) fn find_error_message(log: &str) -> Option<&str> {
     let possible = log_lines(log)
         .map(|(_, message)| message)
         .find(|message| {
+            let lowered = message.to_lowercase();
+
+            lowered.starts_with("##[error]") || lowered.contains("error:")
+        })
+        .map(|message| {
             message
-                .to_lowercase()
-                .contains("error:")
+                .strip_prefix("##[error]")
+                .unwrap_or(message)
         });
 
     if let Some(message) = possible {
@@ -737,7 +744,37 @@ mod tests {
 
         assert_eq!(
             find_error_message(log),
-            Some("##[error]Error: getaddrinfo ENOTFOUND")
+            Some("Error: getaddrinfo ENOTFOUND")
+        );
+    }
+
+    // The runner's own annotations carry no colon, and were not matched at all.
+    #[test]
+    fn an_annotation_is_an_error() {
+        let log = concat!(
+            "2026-08-07T11:16:15.0000000Z Requested labels: ubuntu-26.04\n",
+            "2026-08-07T11:16:16.3532464Z ##[error]Unable to resolve actions. Cannot access repositories\n"
+        );
+
+        assert_eq!(
+            find_error_message(log),
+            Some("Unable to resolve actions. Cannot access repositories")
+        );
+    }
+
+    // Taking the first leaves the runner's generic trailer behind in favour of
+    // whatever the failing command had to say for itself.
+    #[test]
+    fn a_specific_message_beats_the_annotation_which_follows_it() {
+        let log = concat!(
+            "2026-08-07T11:16:15.0000000Z error: Linting: Failed to parse sysusers entry\n",
+            "2026-08-07T11:16:16.0000000Z Error: building at STEP \"RUN\": exit status 1\n",
+            "2026-08-07T11:16:17.0000000Z ##[error]Process completed with exit code 1.\n"
+        );
+
+        assert_eq!(
+            find_error_message(log),
+            Some("error: Linting: Failed to parse sysusers entry")
         );
     }
 }
