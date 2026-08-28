@@ -134,6 +134,8 @@ pub(crate) struct WorkflowStep {
     pub(crate) uses: Option<String>,
     #[serde(default)]
     pub(crate) actions: Vec<WorkflowAction>,
+    #[serde(default)]
+    pub(crate) error: Option<String>,
 }
 
 /// A step of a composite action. These are absent from the results returned
@@ -285,31 +287,25 @@ fn log_lines(log: &str) -> impl Iterator<Item = (OffsetDateTime, &str)> {
 
 // The runner annotates a failure with ##[error], but whatever was being run
 // will have said something more specific first, and says it in its own way.
-pub(crate) fn find_error_message(log: &str) -> Option<&str> {
-    let possible = log_lines(log)
-        .map(|(_, message)| message)
-        .find(|message| {
-            let lowered = message.to_lowercase();
+fn as_error_message(message: &str) -> Option<&str> {
+    let lowered = message.to_lowercase();
 
-            lowered.starts_with("##[error]") || lowered.contains("error:")
-        })
-        .map(|message| {
+    if lowered.starts_with("##[error]") || lowered.contains("error:") {
+        Some(
             message
                 .strip_prefix("##[error]")
-                .unwrap_or(message)
-        });
-
-    if let Some(message) = possible {
-        debug!(?message);
+                .unwrap_or(message),
+        )
+    } else {
+        None
     }
-
-    possible
 }
 
 struct LoggedStep {
     started_at: OffsetDateTime,
     uses: Option<String>,
     actions: Vec<WorkflowAction>,
+    error: Option<String>,
 }
 
 // A step can also run a local path or a Docker image.
@@ -358,8 +354,21 @@ fn parse_logged_steps(log: &str) -> Vec<LoggedStep> {
                 started_at: stamp,
                 uses: None,
                 actions: Vec::new(),
+                error: None,
             });
             continue;
+        }
+
+        if let Some(step) = steps.last_mut() {
+            if step
+                .error
+                .is_none()
+            {
+                if let Some(text) = as_error_message(message) {
+                    debug!(?text);
+                    step.error = Some(text.to_string());
+                }
+            }
         }
 
         if message.starts_with("##[start-action") {
@@ -394,6 +403,7 @@ fn parse_logged_steps(log: &str) -> Vec<LoggedStep> {
                 started_at: stamp,
                 uses: parse_uses(message),
                 actions: Vec::new(),
+                error: None,
             });
         }
     }
@@ -449,6 +459,7 @@ pub(crate) fn refine_step_times(steps: &mut [WorkflowStep], log: &str) {
 
         step.uses = entry.uses;
         step.actions = entry.actions;
+        step.error = entry.error;
     }
 }
 
@@ -512,6 +523,7 @@ mod tests {
             completed_at: stamp(completed_at),
             uses: None,
             actions: Vec::new(),
+            error: None,
         }
     }
 
@@ -737,13 +749,8 @@ mod tests {
 
     #[test]
     fn error_message_is_found_without_its_timestamp() {
-        let log = concat!(
-            "2026-08-07T12:01:11.6136875Z Getting image source signatures\n",
-            "2026-08-07T12:01:11.6704561Z ##[error]Error: getaddrinfo ENOTFOUND\n"
-        );
-
         assert_eq!(
-            find_error_message(log),
+            as_error_message("##[error]Error: getaddrinfo ENOTFOUND"),
             Some("Error: getaddrinfo ENOTFOUND")
         );
     }
@@ -751,15 +758,12 @@ mod tests {
     // The runner's own annotations carry no colon, and were not matched at all.
     #[test]
     fn an_annotation_is_an_error() {
-        let log = concat!(
-            "2026-08-07T11:16:15.0000000Z Requested labels: ubuntu-26.04\n",
-            "2026-08-07T11:16:16.3532464Z ##[error]Unable to resolve actions. Cannot access repositories\n"
+        assert_eq!(
+            as_error_message("##[error]Unable to resolve actions."),
+            Some("Unable to resolve actions.")
         );
 
-        assert_eq!(
-            find_error_message(log),
-            Some("Unable to resolve actions. Cannot access repositories")
-        );
+        assert_eq!(as_error_message("Getting image source signatures"), None);
     }
 
     // Taking the first leaves the runner's generic trailer behind in favour of
@@ -767,14 +771,67 @@ mod tests {
     #[test]
     fn a_specific_message_beats_the_annotation_which_follows_it() {
         let log = concat!(
-            "2026-08-07T11:16:15.0000000Z error: Linting: Failed to parse sysusers entry\n",
-            "2026-08-07T11:16:16.0000000Z Error: building at STEP \"RUN\": exit status 1\n",
-            "2026-08-07T11:16:17.0000000Z ##[error]Process completed with exit code 1.\n"
+            "2026-08-07T11:16:14.0000000Z Current runner version: '2.336.0'\n",
+            "2026-08-07T11:16:15.0000000Z ##[group]Run podman build .\n",
+            "2026-08-07T11:16:16.0000000Z error: Linting: Failed to parse sysusers entry\n",
+            "2026-08-07T11:16:17.0000000Z Error: building at STEP \"RUN\": exit status 1\n",
+            "2026-08-07T11:16:18.0000000Z ##[error]Process completed with exit code 1.\n"
         );
 
+        let logged = parse_logged_steps(log);
+
         assert_eq!(
-            find_error_message(log),
+            logged[1]
+                .error
+                .as_deref(),
             Some("error: Linting: Failed to parse sysusers entry")
+        );
+    }
+
+    #[test]
+    fn error_belongs_to_producing_step() {
+        let log = concat!(
+            "2026-08-07T11:16:14.0000000Z Current runner version: '2.336.0'\n",
+            "2026-08-07T11:16:15.0000000Z ##[group]Run ./flaky.sh\n",
+            "2026-08-07T11:16:16.0000000Z error: transient, retrying\n",
+            "2026-08-07T11:16:17.0000000Z ##[group]Run ./deploy.sh\n",
+            "2026-08-07T11:16:18.0000000Z ##[error]deploy rejected by remote\n"
+        );
+
+        let logged = parse_logged_steps(log);
+
+        assert_eq!(logged[0].error, None);
+        assert_eq!(
+            logged[1]
+                .error
+                .as_deref(),
+            Some("error: transient, retrying")
+        );
+        assert_eq!(
+            logged[2]
+                .error
+                .as_deref(),
+            Some("deploy rejected by remote")
+        );
+    }
+
+    // A failure before any step is announced belongs to the setup the runner
+    // was doing at the time, which is a step in its own right.
+    #[test]
+    fn failure_during_setup_belongs_to_first_step() {
+        let log = concat!(
+            "2026-08-07T11:16:14.0000000Z Current runner version: '2.336.0'\n",
+            "2026-08-07T11:16:16.3532464Z ##[error]Unable to resolve actions.\n"
+        );
+
+        let logged = parse_logged_steps(log);
+
+        assert_eq!(logged.len(), 1);
+        assert_eq!(
+            logged[0]
+                .error
+                .as_deref(),
+            Some("Unable to resolve actions.")
         );
     }
 }

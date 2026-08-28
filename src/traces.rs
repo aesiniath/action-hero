@@ -16,8 +16,7 @@ use tracing::debug;
 
 use crate::VERSION;
 use crate::github::{
-    Config, GitHubProblem, WorkflowJob, WorkflowRun, find_error_message, refine_step_times,
-    retrieve_job_log,
+    Config, GitHubProblem, WorkflowJob, WorkflowRun, refine_step_times, retrieve_job_log,
 };
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
@@ -174,15 +173,24 @@ pub(crate) async fn display_job_steps(
             }
 
             if step.conclusion == "failure" {
-                span.set_status(opentelemetry::trace::Status::Error {
-                    description: Cow::Borrowed("Step failed"),
-                });
+                // the status code marks the span as an error on its own; a
+                // description is only worth sending if the log had something
+                // specific to say about this step
+                match step.error {
+                    Some(message) => {
+                        span.set_status(opentelemetry::trace::Status::Error {
+                            description: message
+                                .clone()
+                                .into(),
+                        });
 
-                if let Some(message) = log
-                    .as_deref()
-                    .and_then(find_error_message)
-                {
-                    span.set_attribute(KeyValue::new("exception.message", message.to_string()));
+                        span.set_attribute(KeyValue::new("exception.message", message));
+                    }
+                    None => {
+                        span.set_status(opentelemetry::trace::Status::Error {
+                            description: Cow::Borrowed(""),
+                        });
+                    }
                 }
             }
             span.set_attribute(KeyValue::new("conclusion", step.conclusion));
