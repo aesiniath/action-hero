@@ -128,10 +128,10 @@ pub(crate) async fn display_job_steps(
             let step_start = step.started_at + run.delta;
             let step_finish = step.completed_at + run.delta;
 
-            let step_duration = step_finish - step_start;
+            let step_duration = (step_finish - step_start).as_seconds_f64();
 
             println!(
-                "    {}: {},{} {}",
+                "    {}: {},{} {:.3}s",
                 step.name, step.status, step.conclusion, step_duration
             );
 
@@ -200,10 +200,10 @@ pub(crate) async fn display_job_steps(
                 let action_finish = action.completed_at + run.delta;
 
                 println!(
-                    "        {}: {} {}",
+                    "        {}: {} {:.3}s",
                     action.name,
                     action.conclusion,
-                    action_finish - action_start
+                    (action_finish - action_start).as_seconds_f64()
                 );
 
                 if action.conclusion == "skipped" {

@@ -65,7 +65,7 @@ pub(crate) async fn retrieve_workflow_runs(
     config: &Config,
     client: &reqwest::Client,
     count: u32,
-) -> Result<Vec<WorkflowRun>> {
+) -> Result<Vec<WorkflowRun>, GitHubProblem> {
     // use token to retrieve runs for the given workflow from GitHub API
     info!("List Runs for Workflow {}", config.workflow);
 
@@ -80,12 +80,25 @@ pub(crate) async fn retrieve_workflow_runs(
         .send()
         .await?;
 
-    // retrieve the run ID of the most recent 10 runs
-    let body: ResponseRuns = response
-        .json()
+    // as when listing Jobs below, check the response code before attempting to
+    // parse, so that an error response is reported as such rather than as a
+    // decode failure complaining of an absent field.
+
+    let status = response.status();
+    let body = response
+        .text()
         .await?;
 
-    let mut runs: Vec<WorkflowRun> = body.workflow_runs;
+    if status != StatusCode::OK {
+        warn!("{}", status);
+        debug!(body);
+
+        return Err(GitHubProblem::ApiError(status));
+    }
+
+    let json: ResponseRuns = serde_json::from_str(&body)?;
+
+    let mut runs: Vec<WorkflowRun> = json.workflow_runs;
 
     for run in runs.iter_mut() {
         // calculate the change to the origin time if we are in development
