@@ -459,9 +459,7 @@ pub(crate) fn refine_step_times(steps: &mut [WorkflowStep], log: &str) {
     {
         let step = &mut steps[index];
 
-        step.started_at = entry.started_at;
-
-        step.completed_at = match starts.get(position + 1) {
+        let completed_at = match starts.get(position + 1) {
             Some(&next) => next,
             None => entry
                 .actions
@@ -469,6 +467,11 @@ pub(crate) fn refine_step_times(steps: &mut [WorkflowStep], log: &str) {
                 .map(|action| action.completed_at)
                 .unwrap_or(step.completed_at),
         };
+
+        step.started_at = entry.started_at;
+
+        // a truncated end can precede the precise start
+        step.completed_at = completed_at.max(entry.started_at);
 
         step.uses = entry.uses;
         step.actions = entry.actions;
@@ -704,6 +707,40 @@ mod tests {
 
         assert_eq!(steps[1].started_at, stamp("2026-08-07T12:01:11Z"));
         assert_eq!(steps[2].started_at, stamp("2026-08-07T12:01:11.5973101Z"));
+    }
+
+    #[test]
+    fn a_step_never_ends_before_it_starts() {
+        let log = concat!(
+            "2026-08-31T01:33:53.4707443Z Current runner version: '2.336.0'\n",
+            "2026-08-31T01:33:53.6935772Z ##[group]Run echo hello\n",
+            "2026-08-31T01:33:53.8133179Z Cleaning up orphan processes\n"
+        );
+
+        let mut steps = vec![
+            step("Set up job", "2026-08-31T01:33:53Z", "2026-08-31T01:33:53Z"),
+            step(
+                "Send greeting",
+                "2026-08-31T01:33:53Z",
+                "2026-08-31T01:33:53Z",
+            ),
+            step(
+                "Complete job",
+                "2026-08-31T01:33:53Z",
+                "2026-08-31T01:33:53Z",
+            ),
+        ];
+
+        refine_step_times(&mut steps, log);
+
+        for step in steps.iter() {
+            assert!(step.completed_at >= step.started_at);
+        }
+
+        assert_eq!(steps[0].started_at, stamp("2026-08-31T01:33:53.4707443Z"));
+        assert_eq!(steps[0].completed_at, stamp("2026-08-31T01:33:53.6935772Z"));
+        assert_eq!(steps[1].started_at, stamp("2026-08-31T01:33:53.6935772Z"));
+        assert_eq!(steps[1].completed_at, stamp("2026-08-31T01:33:53.6935772Z"));
     }
 
     #[test]
