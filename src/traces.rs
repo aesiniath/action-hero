@@ -15,7 +15,9 @@ use time::OffsetDateTime;
 use tracing::debug;
 
 use crate::VERSION;
-use crate::github::{Config, GitHubProblem, WorkflowJob, WorkflowRun, retrieve_job_log};
+use crate::github::{
+    Config, GitHubProblem, WorkflowJob, WorkflowRun, refine_step_times, retrieve_job_log,
+};
 
 /// It turns out that the OpenTelemetry API uses std::time::SystemTime to
 /// represent start and end times (which makes sense, given that is mostly
@@ -74,6 +76,15 @@ pub(crate) async fn display_job_steps(
     for job in jobs {
         println!("{}", job.name);
 
+        // fetched once per job, not once per step
+        let log = retrieve_job_log(config, client, job.job_id).await?;
+
+        let mut steps = job.steps;
+
+        if let Some(log) = &log {
+            refine_step_times(&mut steps, log);
+        }
+
         // get job start and end times
         let job_start = job.started_at + run.delta;
         let job_finish = job.completed_at + run.delta;
@@ -109,7 +120,7 @@ pub(crate) async fn display_job_steps(
 
         // now iterate through the steps of this job, and extract the details
         // to be put onto individual grandchild spans.
-        for step in job.steps {
+        for step in steps {
             // convert start and stop times to a suitable DateTime type. We
             // add "delta" to reset the origin to the program start time if
             // doing development.
@@ -117,10 +128,10 @@ pub(crate) async fn display_job_steps(
             let step_start = step.started_at + run.delta;
             let step_finish = step.completed_at + run.delta;
 
-            let step_duration = step_finish - step_start;
+            let step_duration = (step_finish - step_start).as_seconds_f64();
 
             println!(
-                "    {}: {},{} {}",
+                "    {}: {},{} {:.3}s",
                 step.name, step.status, step.conclusion, step_duration
             );
 
@@ -148,22 +159,83 @@ pub(crate) async fn display_job_steps(
 
             // because context has a current Span present within it this
             // will create the new Span as a child of that one as parent!
-            let mut span = tracer.build_with_context(builder, &context);
+            let span = tracer.build_with_context(builder, &context);
+
+            let context = context.with_span(span);
+            let span = context.span();
 
             span.set_attribute(KeyValue::new("layer", "Step"));
 
             span.set_attribute(KeyValue::new("status", step.status));
 
-            if step.conclusion == "failure" {
-                span.set_status(opentelemetry::trace::Status::Error {
-                    description: Cow::Borrowed("Step failed"),
-                });
+            if let Some(uses) = &step.uses {
+                span.set_attribute(KeyValue::new("uses", uses.clone()));
+            }
 
-                if let Some(message) = retrieve_job_log(config, client, job.job_id).await? {
-                    span.set_attribute(KeyValue::new("exception.message", message));
+            if step.conclusion == "failure" {
+                // the status code marks the span as an error on its own; a
+                // description is only worth sending if the log had something
+                // specific to say about this step
+                match step.error {
+                    Some(message) => {
+                        span.set_status(opentelemetry::trace::Status::Error {
+                            description: message
+                                .clone()
+                                .into(),
+                        });
+
+                        span.set_attribute(KeyValue::new("exception.message", message));
+                    }
+                    None => {
+                        span.set_status(opentelemetry::trace::Status::Error {
+                            description: Cow::Borrowed(""),
+                        });
+                    }
                 }
             }
             span.set_attribute(KeyValue::new("conclusion", step.conclusion));
+
+            for action in step.actions {
+                let action_start = action.started_at + run.delta;
+                let action_finish = action.completed_at + run.delta;
+
+                println!(
+                    "        {}: {} {:.3}s",
+                    action.name,
+                    action.conclusion,
+                    (action_finish - action_start).as_seconds_f64()
+                );
+
+                if action.conclusion == "skipped" {
+                    continue;
+                }
+
+                let action_start = convert_to_system_time(&action_start);
+                let action_finish = convert_to_system_time(&action_finish);
+
+                let builder = SpanBuilder::from_name(action.name)
+                    .with_start_time(action_start)
+                    .with_end_time(action_finish);
+
+                let mut span = tracer.build_with_context(builder, &context);
+
+                span.set_attribute(KeyValue::new("layer", "Action"));
+
+                span.set_attribute(KeyValue::new("id", action.id));
+
+                if let Some(uses) = &step.uses {
+                    span.set_attribute(KeyValue::new("uses", uses.clone()));
+                }
+
+                if action.conclusion == "failure" {
+                    span.set_status(opentelemetry::trace::Status::Error {
+                        description: Cow::Borrowed("Step of composite action failed"),
+                    });
+                }
+                span.set_attribute(KeyValue::new("conclusion", action.conclusion));
+
+                span.end_with_timestamp(action_finish);
+            }
 
             span.end_with_timestamp(step_finish);
         }
@@ -219,8 +291,8 @@ pub(crate) fn establish_root_context(config: &Config, run: &WorkflowRun) -> Cont
     let run_attempt = run.run_attempt as i64;
 
     // adjust the span start time if we are in development mode
-    let created_at = run.created_at + run.delta;
-    let run_start = convert_to_system_time(&created_at);
+    let started_at = run.run_started_at + run.delta;
+    let run_start = convert_to_system_time(&started_at);
 
     // the naming of this is odd, and the fact that it's hidden on TraceContextExt is
     // unhelpful to say the least.
